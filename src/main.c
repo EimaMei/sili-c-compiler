@@ -99,7 +99,7 @@ typedef SI_ENUM(u32, siPunctuator) {
 };
 
 typedef SI_ENUM(u32, scOperator) {
-	SILEX_OPERATOR_PLUS,
+	SILEX_OPERATOR_PLUS = 1,
 	SILEX_OPERATOR_PLUSPLUS,
 	SILEX_OPERATOR_MINUS,
 	SILEX_OPERATOR_MINUSMINUS,
@@ -306,6 +306,7 @@ b32 silex_lexerTokenGet(scLexer* lexer) {
 		}
 
 		case '+': {
+			pLetter += 1;
 			while (si_charIsSpace(*pLetter)) { pLetter += 1; }
 
 			 if (*pLetter == '+') {
@@ -791,7 +792,7 @@ retry2_to_remove_later:
 	si_printf("%f MB\n", bytes / 1024.f / 1024.f);
 	SI_ASSERT(bytes < SI_MEGA(1));
 
-	siArray(scAstNode) ast = si_arrayMakeReserve(alloc[SC_AST], sizeof(scAstNode), 0);
+	siArray(scAstNode) ast = si_arrayMakeReserve(alloc[SC_AST], sizeof(scAstNode), si_arrayLen(curFunc->code));
 
 	ts = si_timeStampStart();
 	{
@@ -851,7 +852,7 @@ retry2_to_remove_later:
 								init.type = SC_INIT_BINARY;
 								init.value.binary.left = token1;
 								init.value.binary.operator = token2->token.operator;
-								init.value.binary.right = token2;
+								init.value.binary.right = token3;
 								i += 2;
 								break;
 							}
@@ -863,9 +864,12 @@ retry2_to_remove_later:
 
 						default: SI_PANIC();
 					}
+
+					si_arrayPush(&node.value.var.initializers, init);
 				}
 				break;
 			}
+			default: continue;
 		}
 
 		si_arrayPush(&ast, node);
@@ -889,11 +893,11 @@ retry2_to_remove_later:
 							scTokenStruct* left = init->value.binary.left,
 										  *right = init->value.binary.right;
 							if (left->type == SILEX_TOKEN_CONSTANT && left->type == right->type) {
-								init->type = SILEX_TOKEN_CONSTANT;
+								init->type = SC_INIT_CONSTANT;
 
 								scConstant constant = left->token.constant;
 								switch (init->value.binary.operator) {
-									case SILEX_OPERATOR_PLUS: constant.value._signed += constant.value._signed; break;
+									case SILEX_OPERATOR_PLUS: constant.value._signed += right->token.constant.value._signed; break;
 									default: SI_PANIC();
 								}
 								init->value.constant = constant;
@@ -922,44 +926,61 @@ retry2_to_remove_later:
 		u64 src;
 	} scAsm;
 
-	alloc[SC_ASM] = si_allocatorMake(si_arrayLen(ast));
+	alloc[SC_ASM] = si_allocatorMake(sizeof(siArrayHeader) + si_arrayLen(ast) * sizeof(scAsm));
 	bytes = alloc[SC_ASM]->maxLen;
 	si_printf("%f MB\n", bytes / 1024.f / 1024.f);
 	SI_ASSERT(bytes < SI_MEGA(1));
 
+	siArray(scAsm) instructions = si_arrayMakeReserve(alloc[SC_AST], sizeof(scAsm), si_arrayLen(ast));
+
 	ts = si_timeStampStart();
 	for_range (i, 0, si_arrayLen(ast)) {
+		scAsm asm = {0};
 		scAstNode* node = &ast[i];
 
 		switch (node->type) {
 			case SC_AST_VAR_MAKE: {
+				scVariable* var = node->value.var.name;
 				siArray(scInitializer) initializers = node->value.var.initializers;
+
 				for_range (j, 0, si_arrayLen(initializers)) {
 					scInitializer* init = &initializers[j];
 
 					switch (init->type) {
-						case SC_INIT_BINARY: {
-							scTokenStruct* left = init->value.binary.left,
-										  *right = init->value.binary.right;
-							if (left->type == SILEX_TOKEN_CONSTANT && left->type == right->type) {
-								init->type = SILEX_TOKEN_CONSTANT;
-
-								scConstant constant = left->token.constant;
-								switch (init->value.binary.operator) {
-									case SILEX_OPERATOR_PLUS: constant.value._signed += constant.value._signed; break;
-									default: SI_PANIC();
+						case SC_INIT_CONSTANT: {
+							scConstant constant = init->value.constant;
+							switch (var->type.size) {
+								case 4: {
+									asm.type = SC_ASM_LD_M32_I32;
+									asm.dst = 4;
+									asm.src = constant.value._unsigned;
+									break;
 								}
-								init->value.constant = constant;
+								default: SI_PANIC();
 							}
+							break;
 						}
+						default: SI_PANIC();
 					}
 				}
 
 				break;
 			}
+			default: SI_PANIC();
 		}
 
+		si_arrayPush(&instructions, asm);
 	}
+	si_timeStampPrintSince(ts);
+
+
+	ts = si_timeStampStart();
+
+	for_range (i, 0, si_arrayLen(instructions)) {
+		scAsm* instr = &instructions[i];
+		si_printf("%i %i %i\n", instr->type, instr->dst, instr->src);
+	}
+
 	si_timeStampPrintSince(ts);
 #endif
 	for_range (i, 0, countof(alloc)) {
