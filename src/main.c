@@ -82,7 +82,7 @@ typedef struct {
 		u64 _unsigned;
 		f64 _float;
 	} value;
-} siConstant;
+} scConstant;
 
 typedef SI_ENUM(u32, siPunctuator) {
 	SILEX_PUNCTUATOR_BRACKET_L = '(',
@@ -98,7 +98,7 @@ typedef SI_ENUM(u32, siPunctuator) {
 	SILEX_PUNCTUATOR_COMMA = ',',
 };
 
-typedef SI_ENUM(u32, siOperator) {
+typedef SI_ENUM(u32, scOperator) {
 	SILEX_OPERATOR_PLUS,
 	SILEX_OPERATOR_PLUSPLUS,
 	SILEX_OPERATOR_MINUS,
@@ -154,19 +154,24 @@ typedef union {
 	scString text;
 	siKeyword keyword;
 	siPunctuator punctuator;
-	siConstant constant;
-	siOperator operator;
+	scConstant constant;
+	scOperator operator;
 } scToken;
 
 typedef struct {
 	cstring curData;
 	cstring end;
 
-	scTokenType token;
-	scToken value;
+	scTokenType type;
+	scToken token;
 
 	siTokenError error;
 } scLexer;
+
+typedef struct {
+	scTokenType type;
+	scToken token;
+} scTokenStruct;
 
 #if 1
 #define SILEX__TOKENID_AUTO 0x6F747561
@@ -252,11 +257,11 @@ scLexer silex_lexerMake(cstring content, usize len) {
 
 
 b32 silex_lexerTokenGet(scLexer* lexer) {
-	SI_STOPIF(lexer->curData >= lexer->end, lexer->token = SILEX_TOKEN_EOF; return false);
+	SI_STOPIF(lexer->curData >= lexer->end, lexer->type = SILEX_TOKEN_EOF; return false);
 
 	const char* pLetter = lexer->curData;
 	while (si_charIsSpace(*pLetter)) { pLetter += 1; }
-	SI_STOPIF(pLetter >= lexer->end, lexer->token = SILEX_TOKEN_EOF; return false);
+	SI_STOPIF(pLetter >= lexer->end, lexer->type = SILEX_TOKEN_EOF; return false);
 
 
 	switch (*pLetter) {
@@ -279,20 +284,20 @@ b32 silex_lexerTokenGet(scLexer* lexer) {
 
 					siKeyword keyword = silex_keywordGet(stringInt);
 					if (keyword != SILEX_KEYWORD_NONE) {
-						lexer->token = SILEX_TOKEN_KEYWORD;
-						lexer->value.keyword = keyword;
+						lexer->type = SILEX_TOKEN_KEYWORD;
+						lexer->token.keyword = keyword;
 						return true;
 					}
 				}
 
-				lexer->token = SILEX_TOKEN_IDENTIFIER;
+				lexer->type = SILEX_TOKEN_IDENTIFIER;
 #ifndef SILEX_NO_LEN
-				lexer->value.text.len = len;
+				lexer->token.text.len = len;
 #endif
 #ifndef SILEX_USE_HASH
-				lexer->value.text.text = start;
+				lexer->token.text.text = start;
 #else
-				lexer->value.text.hash = hash;
+				lexer->token.text.hash = hash;
 #endif
 
 				return true;
@@ -305,14 +310,14 @@ b32 silex_lexerTokenGet(scLexer* lexer) {
 
 			 if (*pLetter == '+') {
 				lexer->curData = pLetter + 1;
-				lexer->token = SILEX_TOKEN_OPERATOR;
-				lexer->value.operator = SILEX_OPERATOR_PLUSPLUS;
+				lexer->type = SILEX_TOKEN_OPERATOR;
+				lexer->token.operator = SILEX_OPERATOR_PLUSPLUS;
 				return true;
 			}
 
 			lexer->curData = pLetter;
-			lexer->token = SILEX_TOKEN_OPERATOR;
-			lexer->value.operator = SILEX_OPERATOR_PLUS;
+			lexer->type = SILEX_TOKEN_OPERATOR;
+			lexer->token.operator = SILEX_OPERATOR_PLUS;
 			return true;
 		}
 
@@ -340,7 +345,7 @@ b32 silex_lexerTokenGet(scLexer* lexer) {
 						}
 
 						lexer->curData = pLetter;
-						lexer->token = SILEX_TOKEN_INVALID;
+						lexer->type = SILEX_TOKEN_INVALID;
 						lexer->error = SILEX_ERROR_SUFFIX_LONG;
 						return false;
 					}
@@ -352,7 +357,7 @@ b32 silex_lexerTokenGet(scLexer* lexer) {
 						}
 
 						lexer->curData = pLetter;
-						lexer->token = SILEX_TOKEN_INVALID;
+						lexer->type = SILEX_TOKEN_INVALID;
 						lexer->error = SILEX_ERROR_SUFFIX_UNSIGNED;
 						return false;
 					}
@@ -364,7 +369,7 @@ b32 silex_lexerTokenGet(scLexer* lexer) {
 						}
 
 						lexer->curData = pLetter;
-						lexer->token = SILEX_TOKEN_INVALID;
+						lexer->type = SILEX_TOKEN_INVALID;
 						lexer->error = SILEX_ERROR_PREFIX_MINUS;
 						return false;
 					}
@@ -373,9 +378,9 @@ b32 silex_lexerTokenGet(scLexer* lexer) {
 				break;
 			}
 			lexer->curData = pLetter;
-			lexer->token = SILEX_TOKEN_CONSTANT;
+			lexer->type = SILEX_TOKEN_CONSTANT;
 
-			siConstant* constant = &lexer->value.constant;
+			scConstant* constant = &lexer->token.constant;
 			if (state & SI_BIT(2)) {
 				value = -value;
 			}
@@ -394,12 +399,12 @@ b32 silex_lexerTokenGet(scLexer* lexer) {
 		case '*':
 			lexer->curData = pLetter + 1;
 
-			if (lexer->token == SILEX_TOKEN_KEYWORD) {
-				b32 valid = silex_keywordIsType(lexer->value.keyword);
+			if (lexer->type == SILEX_TOKEN_KEYWORD) {
+				b32 valid = silex_keywordIsType(lexer->token.keyword);
 				SI_ASSERT(valid);
 
-				lexer->token = SILEX_TOKEN_PUNCTUATOR;
-				lexer->value.punctuator = '*';
+				lexer->type = SILEX_TOKEN_PUNCTUATOR;
+				lexer->token.punctuator = '*';
 			}
 
 			return true;
@@ -408,8 +413,8 @@ b32 silex_lexerTokenGet(scLexer* lexer) {
 		case ',':
 			lexer->curData = pLetter + 1;
 
-			lexer->token = SILEX_TOKEN_PUNCTUATOR;
-			lexer->value.punctuator = *pLetter;
+			lexer->type = SILEX_TOKEN_PUNCTUATOR;
+			lexer->token.punctuator = *pLetter;
 			return true;
 	}
 	SI_PANIC();
@@ -442,21 +447,16 @@ typedef struct {
 } scVariable;
 
 typedef SI_ENUM(u32, scActionType) {
-	SC_ACTION_VAR_MAKE = 1,
-	SC_ACTION_VAR_ASSIGN_CONSTANT,
-	SC_ACTION_VAR_ADD_CONSTANT,
+	SC_ACTION_VAR_ASSIGN = 1,
+	SC_ACTION_VAR_CREATE,
 	SC_ACTION_RETURN,
 };
 
 typedef struct scAction {
 	scActionType type;
-	u32 nextActionIndex;
-	union {
-		scVariable* var;
-		scToken token;
-	} value;
+	scTokenStruct* values;
 } scAction;
-SI_STATIC_ASSERT(sizeof(scAction) == 24);
+SI_STATIC_ASSERT(sizeof(scAction) == 16);
 
 
 typedef struct {
@@ -496,9 +496,9 @@ scType* sc_typeGetFromKeyword(siKeyword keyword) {
 
 
 scType sc_typeGet(scLexer* lex) {
-	SI_ASSERT(lex->token == SILEX_TOKEN_KEYWORD);
+	SI_ASSERT(lex->type == SILEX_TOKEN_KEYWORD);
 
-	siKeyword keyword = lex->value.keyword;
+	siKeyword keyword = lex->token.keyword;
 	SI_STOPIF(!silex_keywordIsType(keyword), return (scType){.size = -1});
 
 	scType* baseType = sc_typeGetFromKeyword(keyword);
@@ -510,9 +510,9 @@ retry:
 	res = silex_lexerTokenGet(lex);
 	SI_ASSERT(res);
 
-	switch (lex->token) {
+	switch (lex->type) {
 		case SILEX_TOKEN_PUNCTUATOR: {
-			siPunctuator punct = lex->value.punctuator;
+			siPunctuator punct = lex->token.punctuator;
 			SI_ASSERT(punct == '*');
 
 			if (type.ptrCount == 0) {
@@ -524,7 +524,7 @@ retry:
 		}
 
 		case SILEX_TOKEN_KEYWORD: {
-			switch (lex->value.keyword) {
+			switch (lex->token.keyword) {
 				case SILEX_KEYWORD_CHAR:
 				case SILEX_KEYWORD_SHORT:
 				case SILEX_KEYWORD_INT:
@@ -533,7 +533,7 @@ retry:
 					SI_ASSERT_MSG(signedModifier == false, "You cannot have multiple signed modifiers.");
 					SI_ASSERT_MSG(type.traits & SC_TYPE_INT, "Signed modifiers cannot be used for non-integers.");
 
-					type = *sc_typeGetFromKeyword(lex->value.keyword);
+					type = *sc_typeGetFromKeyword(lex->token.keyword);
 					if (keyword == SILEX_KEYWORD_UNSIGNED) {
 						type.traits |= SC_TYPE_UNSIGNED;
 					}
@@ -544,7 +544,7 @@ retry:
 					SI_ASSERT_MSG(!si_betweenu(keyword, SILEX_KEYWORD_SIGNED, SILEX_KEYWORD_UNSIGNED), "You cannot have multiple signed modifiers.");
 					SI_ASSERT_MSG(type.traits & SC_TYPE_INT, "Signed modifiers cannot be used for non-integers.");
 
-					if (lex->value.keyword == SILEX_KEYWORD_UNSIGNED) {
+					if (lex->token.keyword == SILEX_KEYWORD_UNSIGNED) {
 						type.traits |= SC_TYPE_UNSIGNED;
 					}
 
@@ -560,6 +560,40 @@ retry:
 	return type;
 }
 
+typedef SI_ENUM(u32, scInitializerType) {
+	SC_INIT_BINARY,
+	SC_INIT_CONSTANT,
+	SC_INIT_IDENTIFIER
+};
+
+typedef struct {
+	scInitializerType type;
+	union {
+		struct {
+			scOperator operator;
+			scTokenStruct* left;
+			scTokenStruct* right;
+		} binary;
+		scConstant constant;
+		scString identifier;
+	} value;
+} scInitializer;
+
+typedef SI_ENUM(u32, scAstNodeType) {
+	SC_AST_VAR_MAKE = 1,
+};
+
+
+typedef struct {
+	scAstNodeType type;
+	union {
+		struct {
+			scVariable* name;
+			scInitializer* initializers;
+		} var;
+	} value;
+} scAstNode;
+
 typedef SI_ENUM(u32, scIndex) {
 	SC_MAIN,
 
@@ -567,15 +601,19 @@ typedef SI_ENUM(u32, scIndex) {
 	SC_FUNC,
 	SC_VARS,
 
+	SC_AST,
+	SC_ASM,
+
 	SC_ALLOC_LEN
 };
 
 
 #define SC_MAX_FUNCS 128
-#define SC_MAX_ACTIONS 128
 #define SC_MAX_PARAM 128
-#define SC_MAX_VARS 256
 
+#define SC_MAX_VARS 1024
+#define SC_MAX_ACTIONS 160
+#define SC_MAX_INITIALIZERS 32
 
 
 int main(void) {
@@ -605,11 +643,11 @@ int main(void) {
 
 	alloc[SC_MAIN] = si_allocatorMake((sizeof(siArrayHeader) + sizeof(scAction) * SC_MAX_ACTIONS) * SC_MAX_FUNCS);
 	alloc[SC_FUNC] = si_allocatorMake((sizeof(siArrayHeader) + sizeof(scFunction) + sizeof(scVariable) * SC_MAX_PARAM) * SC_MAX_FUNCS);
-	alloc[SC_VARS] = si_allocatorMake(sizeof(scVariable) * SC_MAX_VARS);
+	alloc[SC_VARS] = si_allocatorMake(sizeof(scVariable) * SC_MAX_VARS + sizeof(scTokenStruct) * SC_MAX_INITIALIZERS * SC_MAX_ACTIONS + sizeof(siArrayHeader) * SC_MAX_ACTIONS);
 	scLexer lex = silex_lexerMake(text, textLen);
 
 	usize bytes = 0;
-	for_range (i, 0, SC_ALLOC_LEN) {
+	for_range (i, 0, SC_ALLOC_LEN - 2) {
 		bytes += alloc[i]->maxLen;
 	}
 	si_printf("%f MB\n", bytes / 1024.f / 1024.f);
@@ -623,18 +661,18 @@ int main(void) {
 
 	siTimeStamp ts = si_timeStampStart();
 	while (silex_lexerTokenGet(&lex)) {
-		switch (lex.token) {
+		switch (lex.type) {
 			case SILEX_TOKEN_KEYWORD: {
 				scType type = sc_typeGet(&lex);
 
 				if (type.size != -1) {
-					SI_ASSERT(lex.token == SILEX_TOKEN_IDENTIFIER);
-					scString name = lex.value.text;
+					SI_ASSERT(lex.type == SILEX_TOKEN_IDENTIFIER);
+					scString name = lex.token.text;
 
 					b32 res = silex_lexerTokenGet(&lex);
-					SI_ASSERT(res && lex.token == SILEX_TOKEN_PUNCTUATOR);
+					SI_ASSERT(res && lex.type == SILEX_TOKEN_PUNCTUATOR);
 
-					switch (lex.value.punctuator) {
+					switch (lex.token.punctuator) {
 						case '(': {
 							scFunction* func = &functions[si_arrayLen(functions)];
 							func->type = type;
@@ -646,17 +684,17 @@ int main(void) {
 							while (res) {
 								res = silex_lexerTokenGet(&lex);
 								scType type = sc_typeGet(&lex);
-								SI_ASSERT(res && lex.token == SILEX_TOKEN_IDENTIFIER);
+								SI_ASSERT(res && lex.type == SILEX_TOKEN_IDENTIFIER);
 
 								scVariable var;
-								var.name = lex.value.text;
+								var.name = lex.token.text;
 								var.type = type;
 
 								si_arrayPush(&func->parameters, var);
 
 								res = silex_lexerTokenGet(&lex);
-								SI_ASSERT(res && lex.token == SILEX_TOKEN_PUNCTUATOR);
-								siPunctuator punc = lex.value.punctuator;
+								SI_ASSERT(res && lex.type == SILEX_TOKEN_PUNCTUATOR);
+								siPunctuator punc = lex.token.punctuator;
 
 								if (punc == ',') {
 									continue;
@@ -675,55 +713,31 @@ int main(void) {
 							scVariable var;
 							var.name = name;
 							var.type = type;
-							scVariable* varPtr = si_arrayPush(&curFunc->scope, var);
+							scVariable* pVar = si_arrayPush(&curFunc->scope, var);
 
 							scAction action;
-							scAction* pAction;
+							action.type = SC_ACTION_VAR_ASSIGN;
+							action.values = si_arrayMakeReserve(alloc[SC_VARS], sizeof(scTokenStruct), 2);
 
-							action.type = SC_ACTION_VAR_MAKE;
-							action.value.var = varPtr;
-							pAction= si_arrayPush(&curFunc->code, action);
-
+							si_arrayPush(&action.values, pVar);
 retry:
 							res = silex_lexerTokenGet(&lex);
 							SI_ASSERT(res);
+							scTokenStruct token = (scTokenStruct){lex.type, lex.token};
 
-							switch (lex.token) {
-								case SILEX_TOKEN_CONSTANT: {
-									pAction->nextActionIndex = si_arrayLen(curFunc->code);
-
-									action.type = SC_ACTION_VAR_ASSIGN_CONSTANT;
-									action.nextActionIndex = 0;
-									action.value.token = lex.value;
-									pAction = si_arrayPush(&curFunc->code, action);
-									goto retry;
-								}
+							switch (lex.type) {
 								case SILEX_TOKEN_PUNCTUATOR: {
-									if (lex.value.punctuator == ';') {
+									if (lex.token.punctuator == ';') {
 										break;
 									}
 									SI_PANIC();
 								}
-								case SILEX_TOKEN_OPERATOR: {
-									pAction->nextActionIndex = si_arrayLen(curFunc->code);
-
-									res = silex_lexerTokenGet(&lex);
-									SI_ASSERT(res);
-
-									switch (lex.token) {
-										case SILEX_TOKEN_CONSTANT: action.type = SC_ACTION_VAR_ADD_CONSTANT; break;
-										default: SI_PANIC();
-									}
-									action.nextActionIndex = 0;
-									action.value.token = lex.value;
-									pAction = si_arrayPush(&curFunc->code, action);
-
+								default:
+									si_arrayPush(&action.values, token);
 									goto retry;
-								}
-								default: SI_PANIC();
 							}
 
-
+							si_arrayPush(&curFunc->code, action);
 							break;
 						}
 
@@ -736,26 +750,29 @@ retry:
 					break;
 				}
 
-				switch (lex.value.keyword) {
+				switch (lex.token.keyword) {
 					case SILEX_KEYWORD_RETURN: {
 
 						scAction action;
 						action.type = SC_ACTION_RETURN;
-						//action.value.token.type = lex.token;
-						//action.value.token.value = lex.value;
+						action.values = si_arrayMakeReserve(alloc[SC_VARS], sizeof(scTokenStruct), 2);
 
-						b32 res = silex_lexerTokenGet(&lex);
-						SI_ASSERT(res && lex.token == SILEX_TOKEN_CONSTANT);
-
+						b32 res;
+retry2_to_remove_later:
 						res = silex_lexerTokenGet(&lex);
-						switch (lex.token) {
+						SI_ASSERT(res);
+						scTokenStruct token = (scTokenStruct){lex.type, lex.token};
+
+						switch (lex.type) {
 							case SILEX_TOKEN_PUNCTUATOR: {
-								if (lex.value.punctuator == ';') {
+								if (lex.token.punctuator == ';') {
 									break;
 								}
 								SI_PANIC();
 							}
-							default: SI_PANIC();
+							default:
+								si_arrayPush(&action.values, token);
+								goto retry2_to_remove_later;
 						}
 
 						si_arrayPush(&curFunc->code, action);
@@ -767,6 +784,14 @@ retry:
 		}
 	}
 	si_timeStampPrintSince(ts);
+
+#if 1
+	alloc[SC_AST] = si_allocatorMake((sizeof(scAstNode) + sizeof(siArrayHeader) + sizeof(scInitializer) * SC_MAX_INITIALIZERS) * si_arrayLen(curFunc->code));
+	bytes = alloc[SC_AST]->maxLen;
+	si_printf("%f MB\n", bytes / 1024.f / 1024.f);
+	SI_ASSERT(bytes < SI_MEGA(1));
+
+	siArray(scAstNode) ast = si_arrayMakeReserve(alloc[SC_AST], sizeof(scAstNode), 0);
 
 	ts = si_timeStampStart();
 	{
@@ -800,17 +825,143 @@ retry:
 		}
 	}
 
-
 	for_range (i, 0, si_arrayLen(curFunc->code)) {
-		scAction action = curFunc->code[i];
+		scAction* action = &curFunc->code[i];
+		scAstNode node;
 
-		si_printf("%llu: %i\n", i, action.type);
+		switch (action->type) {
+			case SC_ACTION_VAR_ASSIGN: {
+				scVariable* var = *si_cast(scVariable**, &action->values[0]);
+				node.type = SC_AST_VAR_MAKE;
+				node.value.var.name = var;
+				node.value.var.initializers = si_arrayMakeReserve(alloc[SC_AST], sizeof(scInitializer), 0);
+
+				scTokenStruct* token1, *token2, *token3;
+				scInitializer init;
+				for_range (i, 1, si_arrayLen(action->values)) {
+					token1 = &action->values[i];
+					token2 = si_arrayAt(action->values, i + 1);
+
+					switch (token1->type) {
+						case SILEX_TOKEN_CONSTANT: {
+							if (token2 != nil && token2->type == SILEX_TOKEN_OPERATOR) {
+								token3 = si_arrayAt(action->values, i + 2);
+								SI_ASSERT_MSG(token3 != nil, "Expected an expression after the operator.");
+
+								init.type = SC_INIT_BINARY;
+								init.value.binary.left = token1;
+								init.value.binary.operator = token2->token.operator;
+								init.value.binary.right = token2;
+								i += 2;
+								break;
+							}
+
+							init.type = SC_INIT_CONSTANT;
+							init.value.constant = token1->token.constant;
+							break;
+						}
+
+						default: SI_PANIC();
+					}
+				}
+				break;
+			}
+		}
+
+		si_arrayPush(&ast, node);
 	}
-
-
 	si_timeStampPrintSince(ts);
+#endif
+
+#if 1
+	ts = si_timeStampStart();
+	for_range (i, 0, si_arrayLen(ast)) {
+		scAstNode* node = &ast[i];
+
+		switch (node->type) {
+			case SC_AST_VAR_MAKE: {
+				siArray(scInitializer) initializers = node->value.var.initializers;
+				for_range (j, 0, si_arrayLen(initializers)) {
+					scInitializer* init = &initializers[j];
+
+					switch (init->type) {
+						case SC_INIT_BINARY: {
+							scTokenStruct* left = init->value.binary.left,
+										  *right = init->value.binary.right;
+							if (left->type == SILEX_TOKEN_CONSTANT && left->type == right->type) {
+								init->type = SILEX_TOKEN_CONSTANT;
+
+								scConstant constant = left->token.constant;
+								switch (init->value.binary.operator) {
+									case SILEX_OPERATOR_PLUS: constant.value._signed += constant.value._signed; break;
+									default: SI_PANIC();
+								}
+								init->value.constant = constant;
+							}
+						}
+					}
+				}
+
+				break;
+			}
+		}
+
+	}
+	si_timeStampPrintSince(ts);
+#endif
 
 
+#if 1
+	typedef SI_ENUM(u32, scAsmType) {
+		SC_ASM_LD_M32_I32,
+	};
+
+	typedef struct {
+		scAsmType type;
+		u64 dst;
+		u64 src;
+	} scAsm;
+
+	alloc[SC_ASM] = si_allocatorMake(si_arrayLen(ast));
+	bytes = alloc[SC_ASM]->maxLen;
+	si_printf("%f MB\n", bytes / 1024.f / 1024.f);
+	SI_ASSERT(bytes < SI_MEGA(1));
+
+	ts = si_timeStampStart();
+	for_range (i, 0, si_arrayLen(ast)) {
+		scAstNode* node = &ast[i];
+
+		switch (node->type) {
+			case SC_AST_VAR_MAKE: {
+				siArray(scInitializer) initializers = node->value.var.initializers;
+				for_range (j, 0, si_arrayLen(initializers)) {
+					scInitializer* init = &initializers[j];
+
+					switch (init->type) {
+						case SC_INIT_BINARY: {
+							scTokenStruct* left = init->value.binary.left,
+										  *right = init->value.binary.right;
+							if (left->type == SILEX_TOKEN_CONSTANT && left->type == right->type) {
+								init->type = SILEX_TOKEN_CONSTANT;
+
+								scConstant constant = left->token.constant;
+								switch (init->value.binary.operator) {
+									case SILEX_OPERATOR_PLUS: constant.value._signed += constant.value._signed; break;
+									default: SI_PANIC();
+								}
+								init->value.constant = constant;
+							}
+						}
+					}
+				}
+
+				break;
+			}
+		}
+
+	}
+	si_timeStampPrintSince(ts);
+#endif
 	for_range (i, 0, countof(alloc)) {
 		si_allocatorFree(alloc[i]);
 	}

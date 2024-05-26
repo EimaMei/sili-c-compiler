@@ -1,0 +1,20 @@
+# Folders
+chars/
+.cache
+
+# Files
+*.exe
+*.dll
+*.o
+.DS_Store
+*.7z
+*.zip
+*.hide
+*.S
+*.json
+Dockerfile
+*.mp3
+*.png
+build/**
+test
+languages/*.sfg
