@@ -1021,7 +1021,7 @@ typedef rawptr SI_FUNC_PTR(siFunction, (rawptr));
 /* A struct denoting the version. */
 typedef struct { i32 major, minor; } siVersion;
 
-/* An XY point structur	e. Both are 32-bit integers. */
+/* An XY point structure. Both are 32-bit integers. */
 typedef struct { i32 x, y; } siPoint;
 /* x - i32 | y - i32
  * Macro to define an XY i32 point. */
@@ -1178,7 +1178,9 @@ typedef struct {
 } siAllocator;
 
 /* Sets memory alignment. By default it's 4 bytes. */
-#define SI_DEFAULT_MEMORY_ALIGNMENT (4)
+#ifndef SI_DEFAULT_MEMORY_ALIGNMENT
+	#define SI_DEFAULT_MEMORY_ALIGNMENT (4)
+#endif
 /* Aligns 'n' by SI_DEFAULT_MEMORY_ALIGNMENT. */
 usize si_alignCeil(usize n);
 /* Aligns 'n' by 'alignment'. */
@@ -6574,7 +6576,8 @@ SI_GOTO_LABEL(GOTO_PRINT_SWITCH)
 				cstring beforeAlt = fmtPtr;
 				do {
 					SI_SET_FMT_PTR(x, fmtPtr);
-				} while (x == 'l' || si_charIsDigit(x) || x == '.' || x == '*');
+				}
+				while (x == 'l' || si_charIsDigit(x) || x == '.' || x == '*');
 
 				char altForm[2];
 				altForm[0] = '0';
@@ -6582,7 +6585,7 @@ SI_GOTO_LABEL(GOTO_PRINT_SWITCH)
 
 				SI_STR_CPY(altForm, 2, remainingLen, buffer, bufIndex);
 
-				fmtPtr = beforeAlt;
+				fmtPtr = beforeAlt + 1;
 				x = *beforeAlt;
 
 				goto GOTO_PRINT_SWITCH;

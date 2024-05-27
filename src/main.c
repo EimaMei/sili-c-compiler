@@ -466,6 +466,7 @@ typedef struct {
     siArray(scVariable) parameters;
     siArray(scVariable) scope;
 	siArray(scAction) code;
+	u32 stack;
 } scFunction;
 
 
@@ -604,6 +605,7 @@ typedef SI_ENUM(u32, scIndex) {
 
 	SC_AST,
 	SC_ASM,
+	SC_X86ASM,
 
 	SC_ALLOC_LEN
 };
@@ -616,6 +618,92 @@ typedef SI_ENUM(u32, scIndex) {
 #define SC_MAX_ACTIONS 160
 #define SC_MAX_INITIALIZERS 32
 
+
+
+typedef SI_ENUM(u32, scX86Register) {
+	RAX = 0,
+	RCX,
+	RDX,
+	RBX,
+	RSP,
+	RBP,
+	RSI,
+	RDI,
+};
+
+
+typedef struct {
+	u8 __blank : 4;
+	u8 w : 1;
+	u8 r : 1;
+	u8 x : 1;
+	u8 b : 1;
+} scX86RexPrefix;
+
+#define X86RMBYTE(mod, reg, rm) (((mod) << 6) | ((reg) << 3) | (rm))
+
+
+#define X86_MOV_R32_RM32 0x8B
+
+#define X86_MOV_RM32_I32 0xC7
+
+typedef SI_ENUM(u8, scX86OperandType) {
+	X86_OPERAND_M8 = 1,
+	X86_OPERAND_M32,
+	X86_OPERAND_REG
+};
+
+typedef SI_ENUM(u32, siX86Config) {
+	X86_CFG_64BIT = SI_BIT(0),
+	X86_CFG_REX_PREFIX = SI_BIT(1),
+	SC_X86_CONFIG_ID = SI_BIT(2),
+};
+
+force_inline
+usize sc_x86Opcode(u8 opcode, siX86Config config, u32 ptr, u32 value, u8* out) {
+	usize i = 0;
+
+	if (config & X86_CFG_REX_PREFIX) {
+		scX86RexPrefix prefix;
+		prefix.__blank = 0x4;
+		prefix.w = (config & X86_CFG_64BIT) != 0;
+		prefix.x = 0;
+		prefix.b = 0;
+
+		out[i] = *(u8*)&prefix;
+		i += 1;
+	}
+
+	u8 mod, reg, rm;
+	if (ptr == 0) {
+		mod = X86_OPERAND_REG;
+		reg = value;
+		rm = value;
+
+		out[i] = opcode, i += 1;
+		out[i] = X86RMBYTE(mod, reg, rm), i += 1;
+	}
+	else {
+		mod = ptr <= 255 ? X86_OPERAND_M8 : X86_OPERAND_M32;
+		reg = 0;
+		rm = RBP;
+
+		out[i] = opcode, i += 1;
+		out[i] = X86RMBYTE(mod, reg, rm), i += 1;
+
+		if (mod == X86_OPERAND_M8) {
+			u8 val = -ptr;
+			memcpy(&out[i], &val, 1), i += 1;
+		}
+		else {SI_PANIC(); }
+
+		if (value != 0) {
+			memcpy(&out[i], &value, 4), i += 4;
+		}
+	}
+
+	return i;
+}
 
 int main(void) {
 	for_range (i, 0, countof(keywords)) {
@@ -648,7 +736,7 @@ int main(void) {
 	scLexer lex = silex_lexerMake(text, textLen);
 
 	usize bytes = 0;
-	for_range (i, 0, SC_ALLOC_LEN - 2) {
+	for_range (i, 0, SC_ALLOC_LEN - 3) {
 		bytes += alloc[i]->maxLen;
 	}
 	si_printf("%f MB\n", bytes / 1024.f / 1024.f);
@@ -658,7 +746,7 @@ int main(void) {
 	scope_GLOBAL.scope = si_arrayMakeReserve(alloc[SC_VARS], sizeof(scVariable), 0);
 
 	scFunction* curFunc = &scope_GLOBAL;
-	scFunction* functions = si_arrayMakeReserve(alloc[SC_FUNC], sizeof(siArrayHeader), 128);
+	scFunction* functions = si_arrayMakeReserve(alloc[SC_FUNC], sizeof(siFunction), 128);
 
 	siTimeStamp ts = si_timeStampStart();
 	while (silex_lexerTokenGet(&lex)) {
@@ -917,7 +1005,16 @@ retry2_to_remove_later:
 
 #if 1
 	typedef SI_ENUM(u32, scAsmType) {
+		SC_ASM_PUSH_R64,
+		SC_ASM_POP_R64,
+
+		SC_ASM_LD_M8_I8,
+		SC_ASM_LD_M16_I16,
 		SC_ASM_LD_M32_I32,
+		SC_ASM_LD_M64_I32,
+		SC_ASM_LD_M64_I64,
+
+		SC_ASM_RET_I32,
 	};
 
 	typedef struct {
@@ -926,16 +1023,19 @@ retry2_to_remove_later:
 		u64 src;
 	} scAsm;
 
-	alloc[SC_ASM] = si_allocatorMake(sizeof(siArrayHeader) + si_arrayLen(ast) * sizeof(scAsm));
+	alloc[SC_ASM] = si_allocatorMake(sizeof(siArrayHeader) + si_arrayLen(ast) * sizeof(scAsm) + 3 * sizeof(scAsm) * si_arrayLen(functions));
 	bytes = alloc[SC_ASM]->maxLen;
 	si_printf("%f MB\n", bytes / 1024.f / 1024.f);
 	SI_ASSERT(bytes < SI_MEGA(1));
 
-	siArray(scAsm) instructions = si_arrayMakeReserve(alloc[SC_AST], sizeof(scAsm), si_arrayLen(ast));
+	siArray(scAsm) instructions = si_arrayMakeReserve(alloc[SC_AST], sizeof(scAsm), si_arrayLen(ast) + 3 * si_arrayLen(functions));
+
+	scAsm asm = {0};
+	asm.type = SC_ASM_PUSH_R64;
+	si_arrayPush(&instructions, asm);
 
 	ts = si_timeStampStart();
 	for_range (i, 0, si_arrayLen(ast)) {
-		scAsm asm = {0};
 		scAstNode* node = &ast[i];
 
 		switch (node->type) {
@@ -951,9 +1051,11 @@ retry2_to_remove_later:
 							scConstant constant = init->value.constant;
 							switch (var->type.size) {
 								case 4: {
+									curFunc->stack = si_alignCeilEx(curFunc->stack + 4, 4);
 									asm.type = SC_ASM_LD_M32_I32;
-									asm.dst = 4;
+									asm.dst = curFunc->stack;
 									asm.src = constant.value._unsigned;
+
 									break;
 								}
 								default: SI_PANIC();
@@ -971,14 +1073,43 @@ retry2_to_remove_later:
 
 		si_arrayPush(&instructions, asm);
 	}
+
 	si_timeStampPrintSince(ts);
 
+	alloc[SC_X86ASM] = si_allocatorMake(sizeof(u8) * 4 * si_arrayLen(instructions));
+	bytes = alloc[SC_X86ASM]->maxLen;
+	si_printf("%f MB\n", bytes / 1024.f / 1024.f);
+	SI_ASSERT(bytes < SI_MEGA(1));
+
+
+	usize x86Len = 0;
+	u8* x86 = si_mallocArray(alloc[SC_X86ASM], u8, 4 * si_arrayLen(instructions));
 
 	ts = si_timeStampStart();
 
 	for_range (i, 0, si_arrayLen(instructions)) {
-		scAsm* instr = &instructions[i];
-		si_printf("%i %i %i\n", instr->type, instr->dst, instr->src);
+		scAsm* instruction = &instructions[i];
+
+		switch (instruction->type) {
+			case SC_ASM_PUSH_R64: {
+				break;
+			}
+
+			case SC_ASM_LD_M32_I32: {
+				u8 out[8];
+				usize len = sc_x86Opcode(
+					X86_MOV_RM32_I32,
+					0,
+					instruction->dst,
+					instruction->src,
+					out
+				);
+
+				memcpy(&x86[x86Len], out, len);
+				x86Len += len;
+				break;
+			}
+		}
 	}
 
 	si_timeStampPrintSince(ts);
