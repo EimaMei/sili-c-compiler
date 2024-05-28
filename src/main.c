@@ -1,427 +1,9 @@
 #include <sili.h>
 
-cstring keywords[] = {
-	"auto", "break", "case", "char", "const", "continue", "default", "do",
-	"double", "else", "enum", "extern", "float", "for", "goto", "if", "int", "long",
-	"register", "return", "short", "signed", "sizeof", "static", "struct", "switch",
-	"typedef", "union", "unsigned", "void", "volatile", "while"
-};
-u64 keywords_U64[countof(keywords)];
-
-typedef SI_ENUM(u32, scTokenType) {
-	SILEX_TOKEN_NONE = 0,
-	SILEX_TOKEN_KEYWORD,
-	SILEX_TOKEN_IDENTIFIER,
-	SILEX_TOKEN_CONSTANT,
-	SILEX_TOKEN_STRING_LITERAL,
-	SILEX_TOKEN_OPERATOR,
-	SILEX_TOKEN_PUNCTUATOR,
-
-	SILEX_TOKEN_EOF,
-	SILEX_TOKEN_INVALID,
-};
-
-
-typedef SI_ENUM(u32, siTokenError) {
-	SILEX_ERROR_NONE,
-	SILEX_ERROR_SUFFIX_LONG,
-	SILEX_ERROR_SUFFIX_UNSIGNED,
-	SILEX_ERROR_PREFIX_MINUS,
-};
-
-typedef SI_ENUM(u32, siKeyword) {
-	SILEX_KEYWORD_NONE = 0,
-	SILEX_KEYWORD_AUTO,
-	SILEX_KEYWORD_BREAK,
-	SILEX_KEYWORD_CASE,
-	SILEX_KEYWORD_CONST,
-	SILEX_KEYWORD_CONTINUE,
-	SILEX_KEYWORD_DEFAULT,
-	SILEX_KEYWORD_DO,
-	SILEX_KEYWORD_ELSE,
-	SILEX_KEYWORD_ENUM,
-	SILEX_KEYWORD_EXTERN,
-	SILEX_KEYWORD_FOR,
-	SILEX_KEYWORD_GOTO,
-	SILEX_KEYWORD_IF,
-	SILEX_KEYWORD_REGISTER,
-	SILEX_KEYWORD_RETURN,
-	SILEX_KEYWORD_SIZEOF,
-	SILEX_KEYWORD_STATIC,
-	SILEX_KEYWORD_STRUCT,
-	SILEX_KEYWORD_SWITCH,
-	SILEX_KEYWORD_TYPEDEF,
-	SILEX_KEYWORD_UNION,
-	SILEX_KEYWORD_VOID,
-	SILEX_KEYWORD_VOLATILE,
-	SILEX_KEYWORD_WHILE,
-
-	/* Type keywords */
-	SILEX_KEYWORD_CHAR,
-	SILEX_KEYWORD_SHORT,
-	SILEX_KEYWORD_INT,
-	SILEX_KEYWORD_LONG,
-	SILEX_KEYWORD_SIGNED,
-	SILEX_KEYWORD_UNSIGNED,
-	SILEX_KEYWORD_FLOAT,
-	SILEX_KEYWORD_DOUBLE,
-};
-
-#define silex_keywordIsType(keyword) si_betweenu(keyword, SILEX_KEYWORD_CHAR, SILEX_KEYWORD_DOUBLE)
-
-typedef SI_ENUM(u32, siConstantType) {
-	SILEX_CONSTANT_NUM_SIGNED = 1,
-	SILEX_CONSTANT_NUM_UNSIGNED,
-	SILEX_CONSTANT_FLOAT,
-};
-
-typedef struct {
-	siConstantType type;
-	union {
-		i64 _signed;
-		u64 _unsigned;
-		f64 _float;
-	} value;
-} scConstant;
-
-typedef SI_ENUM(u32, siPunctuator) {
-	SILEX_PUNCTUATOR_BRACKET_L = '(',
-	SILEX_PUNCTUATOR_BRACKET_R = ')',
-	SILEX_PUNCTUATOR_SQUARE_BRACKET_L = '[',
-	SILEX_PUNCTUATOR_SQUARE_BRACKET_R = ']',
-	SILEX_PUNCTUATOR_CURLY_BRACKET_L = '{',
-	SILEX_PUNCTUATOR_CURLY_BRACKET_R = '}',
-
-	SILEX_PUNCTUATOR_SEMICOLON = ';',
-	SILEX_PUNCTUATOR_EQUAL = '=',
-
-	SILEX_PUNCTUATOR_COMMA = ',',
-};
-
-typedef SI_ENUM(u32, scOperator) {
-	SILEX_OPERATOR_PLUS = 1,
-	SILEX_OPERATOR_PLUSPLUS,
-	SILEX_OPERATOR_MINUS,
-	SILEX_OPERATOR_MINUSMINUS,
-};
-
-
-#define SILEX_USE_HASH 1
-#define SILEX_NO_LEN 1
-
-#if defined(SILEX_USE_HASH)
-	#ifndef SILEX_HASH_TYPE
-		#define SILEX_HASH_TYPE u64
-	#endif
-
-	#ifndef SILEX_HASH_FUNC_INIT
-		#define SILEX_HASH_FUNC_INIT(hash) SILEX_HASH_TYPE hash = 14695981039346656037UL
-	#endif
-
-	#ifndef SILEX_HASH_FUNC
-		#define SILEX_HASH_FUNC(hash, character) \
-			do { \
-				(hash) ^= (u64)(character); \
-				(hash) *= 1099511628211UL; \
-			} while (0)
-	#endif
-
-	#ifndef SILEX_HASH_FUNC_END
-		#define SILEX_HASH_FUNC_END(hash, str, index)
-	#endif
-
-
-	typedef SILEX_HASH_TYPE silexHashType;
-#else
-	#define SILEX_HASH_FUNC_INIT(hash)
-	#define SILEX_HASH_FUNC(hash, character)
-	#define SILEX_HASH_FUNC_END(hash, str, index)
-#endif
-
-
-typedef struct {
-#if !defined(SILEX_USE_HASH)
-	cstring text;
-#else
-	silexHashType hash;
-#endif
-#if !defined(SILEX_NO_LEN)
-	usize len;
-#endif
-} scString;
-
-typedef union {
-	scString text;
-	siKeyword keyword;
-	siPunctuator punctuator;
-	scConstant constant;
-	scOperator operator;
-} scToken;
-
-typedef struct {
-	cstring curData;
-	cstring end;
-
-	scTokenType type;
-	scToken token;
-
-	siTokenError error;
-} scLexer;
-
-typedef struct {
-	scTokenType type;
-	scToken token;
-} scTokenStruct;
-
-#if 1
-#define SILEX__TOKENID_AUTO 0x6F747561
-#define SILEX__TOKENID_BREAK 0x6B61657262
-#define SILEX__TOKENID_CASE 0x65736163
-#define SILEX__TOKENID_CHAR 0x72616863
-#define SILEX__TOKENID_CONST 0x74736E6F63
-#define SILEX__TOKENID_CONTINUE 0x65756E69746E6F63
-#define SILEX__TOKENID_DEFAULT 0x746C7561666564
-#define SILEX__TOKENID_DO 0x6F64
-#define SILEX__TOKENID_DOUBLE 0x656C62756F64
-#define SILEX__TOKENID_ELSE 0x65736C65
-#define SILEX__TOKENID_ENUM 0x6D756E65
-#define SILEX__TOKENID_EXTERN 0x6E7265747865
-#define SILEX__TOKENID_FLOAT 0x74616F6C66
-#define SILEX__TOKENID_FOR 0x726F66
-#define SILEX__TOKENID_GOTO 0x6F746F67
-#define SILEX__TOKENID_IF 0x6669
-#define SILEX__TOKENID_INT 0x746E69
-#define SILEX__TOKENID_LONG 0x676E6F6C
-#define SILEX__TOKENID_REGISTER 0x7265747369676572
-#define SILEX__TOKENID_RETURN 0x6E7275746572
-#define SILEX__TOKENID_SHORT 0x74726F6873
-#define SILEX__TOKENID_SIGNED 0x64656E676973
-#define SILEX__TOKENID_SIZEOF 0x666F657A6973
-#define SILEX__TOKENID_STATIC 0x636974617473
-#define SILEX__TOKENID_STRUCT 0x746375727473
-#define SILEX__TOKENID_SWITCH 0x686374697773
-#define SILEX__TOKENID_TYPEDEF 0x66656465707974
-#define SILEX__TOKENID_UNION 0x6E6F696E75
-#define SILEX__TOKENID_UNSIGNED 0x64656E6769736E75
-#define SILEX__TOKENID_VOID 0x64696F76
-#define SILEX__TOKENID_VOLATILE 0x656C6974616C6F76
-#define SILEX__TOKENID_WHILE 0x656C696877
-#endif
-siKeyword silex_keywordGet(u64 num) {
-	switch (num) {
-		case SILEX__TOKENID_AUTO: return SILEX_KEYWORD_AUTO;
-		case SILEX__TOKENID_BREAK: return SILEX_KEYWORD_BREAK;
-		case SILEX__TOKENID_CASE: return SILEX_KEYWORD_CASE;
-		case SILEX__TOKENID_CHAR: return SILEX_KEYWORD_CHAR;
-		case SILEX__TOKENID_CONST: return SILEX_KEYWORD_CONST;
-		case SILEX__TOKENID_CONTINUE: return SILEX_KEYWORD_CONTINUE;
-		case SILEX__TOKENID_DEFAULT: return SILEX_KEYWORD_DEFAULT;
-		case SILEX__TOKENID_DO: return SILEX_KEYWORD_DO;
-		case SILEX__TOKENID_DOUBLE: return SILEX_KEYWORD_DOUBLE;
-		case SILEX__TOKENID_ELSE: return SILEX_KEYWORD_ELSE;
-		case SILEX__TOKENID_ENUM: return SILEX_KEYWORD_ENUM;
-		case SILEX__TOKENID_EXTERN: return SILEX_KEYWORD_EXTERN;
-		case SILEX__TOKENID_FLOAT: return SILEX_KEYWORD_FLOAT;
-		case SILEX__TOKENID_FOR: return SILEX_KEYWORD_FOR;
-		case SILEX__TOKENID_GOTO: return SILEX_KEYWORD_GOTO;
-		case SILEX__TOKENID_IF: return SILEX_KEYWORD_IF;
-		case SILEX__TOKENID_INT: return SILEX_KEYWORD_INT;
-		case SILEX__TOKENID_LONG: return SILEX_KEYWORD_LONG;
-		case SILEX__TOKENID_REGISTER: return SILEX_KEYWORD_REGISTER;
-		case SILEX__TOKENID_RETURN: return SILEX_KEYWORD_RETURN;
-		case SILEX__TOKENID_SHORT: return SILEX_KEYWORD_SHORT;
-		case SILEX__TOKENID_SIGNED: return SILEX_KEYWORD_SIGNED;
-		case SILEX__TOKENID_SIZEOF: return SILEX_KEYWORD_SIZEOF;
-		case SILEX__TOKENID_STATIC: return SILEX_KEYWORD_STATIC;
-		case SILEX__TOKENID_STRUCT: return SILEX_KEYWORD_STRUCT;
-		case SILEX__TOKENID_SWITCH: return SILEX_KEYWORD_SWITCH;
-		case SILEX__TOKENID_TYPEDEF: return SILEX_KEYWORD_TYPEDEF;
-		case SILEX__TOKENID_UNION: return SILEX_KEYWORD_UNION;
-		case SILEX__TOKENID_UNSIGNED: return SILEX_KEYWORD_UNSIGNED;
-		case SILEX__TOKENID_VOID: return SILEX_KEYWORD_VOID;
-		case SILEX__TOKENID_VOLATILE: return SILEX_KEYWORD_VOLATILE;
-		case SILEX__TOKENID_WHILE: return SILEX_KEYWORD_WHILE;
-	}
-
-	return SILEX_KEYWORD_NONE;
-}
-
-
-scLexer silex_lexerMake(cstring content, usize len) {
-	scLexer lexer = {0};
-	lexer.curData = content;
-	lexer.end = content + len;
-
-	return lexer;
-}
-
-
-b32 silex_lexerTokenGet(scLexer* lexer) {
-	SI_STOPIF(lexer->curData >= lexer->end, lexer->type = SILEX_TOKEN_EOF; return false);
-
-	const char* pLetter = lexer->curData;
-	while (si_charIsSpace(*pLetter)) { pLetter += 1; }
-	SI_STOPIF(pLetter >= lexer->end, lexer->type = SILEX_TOKEN_EOF; return false);
-
-
-	switch (*pLetter) {
-		default: {
-			if (si_charIsAlpha(*pLetter) || *pLetter == '_' || *(u8*)pLetter >= 128) {
-				SILEX_HASH_FUNC_INIT(hash);
-				const char* start = pLetter;
-
-				while (si_charIsAlphanumeric(*pLetter)) {
-					SILEX_HASH_FUNC(hash, *pLetter);
-					pLetter += 1;
-				}
-				lexer->curData = pLetter;
-
-				usize len = pLetter - start;
-
-				if (len <= 8) {
-					u64 stringInt = 0;
-					memcpy(&stringInt, start, len);
-
-					siKeyword keyword = silex_keywordGet(stringInt);
-					if (keyword != SILEX_KEYWORD_NONE) {
-						lexer->type = SILEX_TOKEN_KEYWORD;
-						lexer->token.keyword = keyword;
-						return true;
-					}
-				}
-
-				lexer->type = SILEX_TOKEN_IDENTIFIER;
-#ifndef SILEX_NO_LEN
-				lexer->token.text.len = len;
-#endif
-#ifndef SILEX_USE_HASH
-				lexer->token.text.text = start;
-#else
-				lexer->token.text.hash = hash;
-#endif
-
-				return true;
-			}
-			siFallthrough;
-		}
-
-		case '+': {
-			pLetter += 1;
-			while (si_charIsSpace(*pLetter)) { pLetter += 1; }
-
-			 if (*pLetter == '+') {
-				lexer->curData = pLetter + 1;
-				lexer->type = SILEX_TOKEN_OPERATOR;
-				lexer->token.operator = SILEX_OPERATOR_PLUSPLUS;
-				return true;
-			}
-
-			lexer->curData = pLetter;
-			lexer->type = SILEX_TOKEN_OPERATOR;
-			lexer->token.operator = SILEX_OPERATOR_PLUS;
-			return true;
-		}
-
-
-		case '0': case '1': case '2': case '3': case '4': case '5': case '6': case '7':
-		case '8': case '9': {
-			b32 state = 0; /* NOTE(EimaMei): SI_BIT(0) - is unsigned, SI_BIT(1) - is long, SI_BIT(2) - is negative. */
-			u64 value = 0;
-			u32 base = 10;
-
-			while (true) {
-				char x = si_charLower(*pLetter);
-
-				switch (x) {
-					case '0': case '1': case '2': case '3': case '4': case '5': case '6': case '7': case '8': case '9':
-						value *= base;
-						value += (x - '0');
-						pLetter += 1;
-						continue;
-					case 'l': case 'L': {
-						if ((state & SI_BIT(1)) == 0) {
-							state |= SI_BIT(1);
-							pLetter += 1;
-							continue;
-						}
-
-						lexer->curData = pLetter;
-						lexer->type = SILEX_TOKEN_INVALID;
-						lexer->error = SILEX_ERROR_SUFFIX_LONG;
-						return false;
-					}
-					case 'u': case 'U': {
-						if ((state & SI_BIT(0)) == 0) {
-							state |= SI_BIT(0);
-							pLetter += 1;
-							continue;
-						}
-
-						lexer->curData = pLetter;
-						lexer->type = SILEX_TOKEN_INVALID;
-						lexer->error = SILEX_ERROR_SUFFIX_UNSIGNED;
-						return false;
-					}
-					case '-': {
-						if ((state & SI_BIT(2)) == 0) {
-							state |= SI_BIT(2);
-							pLetter += 1;
-							continue;
-						}
-
-						lexer->curData = pLetter;
-						lexer->type = SILEX_TOKEN_INVALID;
-						lexer->error = SILEX_ERROR_PREFIX_MINUS;
-						return false;
-					}
-				}
-
-				break;
-			}
-			lexer->curData = pLetter;
-			lexer->type = SILEX_TOKEN_CONSTANT;
-
-			scConstant* constant = &lexer->token.constant;
-			if (state & SI_BIT(2)) {
-				value = -value;
-			}
-			if (state & SI_BIT(0)) {
-				constant->value._unsigned = value;
-				constant->type = SILEX_CONSTANT_NUM_UNSIGNED;
-			}
-			else {
-				constant->value._signed = value;
-				constant->type = SILEX_CONSTANT_NUM_SIGNED;
-			}
-
-			return true;
-		}
-
-		case '*':
-			lexer->curData = pLetter + 1;
-
-			if (lexer->type == SILEX_TOKEN_KEYWORD) {
-				b32 valid = silex_keywordIsType(lexer->token.keyword);
-				SI_ASSERT(valid);
-
-				lexer->type = SILEX_TOKEN_PUNCTUATOR;
-				lexer->token.punctuator = '*';
-			}
-
-			return true;
-
-		case '(': case ')': case '[': case ']': case '{': case '}': case ';': case '=':
-		case ',':
-			lexer->curData = pLetter + 1;
-
-			lexer->type = SILEX_TOKEN_PUNCTUATOR;
-			lexer->token.punctuator = *pLetter;
-			return true;
-	}
-	SI_PANIC();
-
-	return false;
-}
+#define SILEX_USE_HASH
+#define SILEX_NO_LEN
+#include <sililex.h>
+#include <x86.h>
 
 
 
@@ -486,7 +68,7 @@ scType type_double = (scType){8, SC_TYPE_FLOAT, 0, nil};
 
 #define sc_typeIsVoid(type) ((type)->size == 0)
 
-scType* sc_typeGetFromKeyword(siKeyword keyword) {
+scType* sc_typeGetFromKeyword(scKeyword keyword) {
 	static scType* types[] = {
 		&type_char, &type_short, &type_int, &type_long,
 		&type_int, &type_unsigned,
@@ -500,7 +82,7 @@ scType* sc_typeGetFromKeyword(siKeyword keyword) {
 scType sc_typeGet(scLexer* lex) {
 	SI_ASSERT(lex->type == SILEX_TOKEN_KEYWORD);
 
-	siKeyword keyword = lex->token.keyword;
+	scKeyword keyword = lex->token.keyword;
 	SI_STOPIF(!silex_keywordIsType(keyword), return (scType){.size = -1});
 
 	scType* baseType = sc_typeGetFromKeyword(keyword);
@@ -514,7 +96,7 @@ retry:
 
 	switch (lex->type) {
 		case SILEX_TOKEN_PUNCTUATOR: {
-			siPunctuator punct = lex->token.punctuator;
+			scPunctuator punct = lex->token.punctuator;
 			SI_ASSERT(punct == '*');
 
 			if (type.ptrCount == 0) {
@@ -619,103 +201,49 @@ typedef SI_ENUM(u32, scIndex) {
 #define SC_MAX_INITIALIZERS 32
 
 
+typedef SI_ENUM(u32, scAsmType) {
+	SC_ASM_PUSH_R64,
+	SC_ASM_POP_R64,
 
-typedef SI_ENUM(u32, scX86Register) {
-	RAX = 0,
-	RCX,
-	RDX,
-	RBX,
-	RSP,
-	RBP,
-	RSI,
-	RDI,
+	SC_ASM_LD_M8_I8,
+	SC_ASM_LD_M16_I16,
+	SC_ASM_LD_M32_I32,
+	SC_ASM_LD_M64_I32,
+	SC_ASM_LD_M64_I64,
+
+	SC_ASM_RET_I32,
 };
-
 
 typedef struct {
-	u8 __blank : 4;
-	u8 w : 1;
-	u8 r : 1;
-	u8 x : 1;
-	u8 b : 1;
-} scX86RexPrefix;
+	scAsmType type;
+	u64 dst;
+	u64 src;
+} scAsm;
 
-#define X86RMBYTE(mod, reg, rm) (((mod) << 6) | ((reg) << 3) | (rm))
-
-
-#define X86_MOV_R32_RM32 0x8B
-
-#define X86_MOV_RM32_I32 0xC7
-
-typedef SI_ENUM(u8, scX86OperandType) {
-	X86_OPERAND_M8 = 1,
-	X86_OPERAND_M32,
-	X86_OPERAND_REG
-};
-
-typedef SI_ENUM(u32, siX86Config) {
-	X86_CFG_64BIT = SI_BIT(0),
-	X86_CFG_REX_PREFIX = SI_BIT(1),
-	SC_X86_CONFIG_ID = SI_BIT(2),
-};
-
-force_inline
-usize sc_x86Opcode(u8 opcode, siX86Config config, u32 ptr, u32 value, u8* out) {
-	usize i = 0;
-
-	if (config & X86_CFG_REX_PREFIX) {
-		scX86RexPrefix prefix;
-		prefix.__blank = 0x4;
-		prefix.w = (config & X86_CFG_64BIT) != 0;
-		prefix.x = 0;
-		prefix.b = 0;
-
-		out[i] = *(u8*)&prefix;
-		i += 1;
-	}
-
-	u8 mod, reg, rm;
-	if (ptr == 0) {
-		mod = X86_OPERAND_REG;
-		reg = value;
-		rm = value;
-
-		out[i] = opcode, i += 1;
-		out[i] = X86RMBYTE(mod, reg, rm), i += 1;
-	}
-	else {
-		mod = ptr <= 255 ? X86_OPERAND_M8 : X86_OPERAND_M32;
-		reg = 0;
-		rm = RBP;
-
-		out[i] = opcode, i += 1;
-		out[i] = X86RMBYTE(mod, reg, rm), i += 1;
-
-		if (mod == X86_OPERAND_M8) {
-			u8 val = -ptr;
-			memcpy(&out[i], &val, 1), i += 1;
-		}
-		else {SI_PANIC(); }
-
-		if (value != 0) {
-			memcpy(&out[i], &value, 4), i += 4;
-		}
-	}
-
-	return i;
-}
 
 int main(void) {
+#if 0
+	cstring keywords[] = {
+		"auto", "break", "case", "char", "const", "continue", "default", "do",
+		"double", "else", "enum", "extern", "float", "for", "goto", "if", "int", "long",
+		"register", "return", "short", "signed", "sizeof", "static", "struct", "switch",
+		"typedef", "union", "unsigned", "void", "volatile", "while"
+	};
+	u64 keywords_U64[countof(keywords)];
+
 	for_range (i, 0, countof(keywords)) {
 		usize len = si_cstrLen(keywords[i]);
 		SI_ASSERT(len <= 8);
-		//memcpy(&keywords_U64[i], keywords[i], len);
+#if 0
+		memcpy(&keywords_U64[i], keywords[i], len);
 
-		//char m[1024];
-		//memcpy(m, keywords[i], len + 1);
-		//si_cstrUpper(m);
-		//si_printf("SILEX_KEYWORD_%s,\n", m, m);
+		char m[1024];
+		memcpy(m, keywords[i], len + 1);
+		si_cstrUpper(m);
+		si_printf("SILEX_KEYWORD_%s,\n", m, m);
+#endif
 	}
+#endif
 
 	siAllocator* alloc[SC_ALLOC_LEN];
 
@@ -783,7 +311,7 @@ int main(void) {
 
 								res = silex_lexerTokenGet(&lex);
 								SI_ASSERT(res && lex.type == SILEX_TOKEN_PUNCTUATOR);
-								siPunctuator punc = lex.token.punctuator;
+								scPunctuator punc = lex.token.punctuator;
 
 								if (punc == ',') {
 									continue;
@@ -1004,24 +532,6 @@ retry2_to_remove_later:
 
 
 #if 1
-	typedef SI_ENUM(u32, scAsmType) {
-		SC_ASM_PUSH_R64,
-		SC_ASM_POP_R64,
-
-		SC_ASM_LD_M8_I8,
-		SC_ASM_LD_M16_I16,
-		SC_ASM_LD_M32_I32,
-		SC_ASM_LD_M64_I32,
-		SC_ASM_LD_M64_I64,
-
-		SC_ASM_RET_I32,
-	};
-
-	typedef struct {
-		scAsmType type;
-		u64 dst;
-		u64 src;
-	} scAsm;
 
 	alloc[SC_ASM] = si_allocatorMake(sizeof(siArrayHeader) + si_arrayLen(ast) * sizeof(scAsm) + 3 * sizeof(scAsm) * si_arrayLen(functions));
 	bytes = alloc[SC_ASM]->maxLen;

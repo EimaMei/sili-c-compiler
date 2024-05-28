@@ -7320,7 +7320,7 @@ const siBenchmarkLimit* si_benchmarkLimitLoop(siTimeStamp time) {
 }
 #endif
 
-#endif /* SI_IMPLEMENTATION */
+#endif /* SI_INCLUDE_SI_H */
 
 #if defined(SI_NO_ASSERTIONS_IN_HEADER) && !defined(SI_NO_ASSERTIONS)
 	#undef SI_ASSERT
