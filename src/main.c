@@ -145,12 +145,12 @@ retry:
 }
 
 typedef SI_ENUM(u32, scInitializerType) {
-	SC_INIT_BINARY,
+	SC_INIT_BINARY = 1,
 	SC_INIT_CONSTANT,
 	SC_INIT_IDENTIFIER
 };
 
-typedef struct {
+typedef struct scInitializer {
 	scInitializerType type;
 	union {
 		struct {
@@ -161,6 +161,8 @@ typedef struct {
 		scConstant constant;
 		scString identifier;
 	} value;
+
+	struct scInitializer* next;
 } scInitializer;
 
 typedef SI_ENUM(u32, scAstNodeType) {
@@ -173,7 +175,7 @@ typedef struct {
 	union {
 		struct {
 			scVariable* name;
-			scInitializer* initializers;
+			scInitializer* init;
 		} var;
 	} value;
 } scAstNode;
@@ -449,40 +451,61 @@ retry2_to_remove_later:
 		switch (action->type) {
 			case SC_ACTION_VAR_ASSIGN: {
 				scVariable* var = *si_cast(scVariable**, &action->values[0]);
+
 				node.type = SC_AST_VAR_MAKE;
 				node.value.var.name = var;
-				node.value.var.initializers = si_arrayMakeReserve(alloc[SC_AST], sizeof(scInitializer), 0);
 
+				scInitializer* prevInit = nil;
 				scTokenStruct* token1, *token2, *token3;
-				scInitializer init;
 				for_range (i, 1, si_arrayLen(action->values)) {
 					token1 = &action->values[i];
 					token2 = si_arrayAt(action->values, i + 1);
 
+					scInitializer* init = si_mallocItem(alloc[SC_AST], scInitializer);
+					if (prevInit != nil) {
+						prevInit->next = init;
+					}
+					else {
+						node.value.var.init = init;
+					}
+					prevInit = init;
+					init->next = nil;
+
 					switch (token1->type) {
 						case SILEX_TOKEN_CONSTANT: {
-							if (token2 != nil && token2->type == SILEX_TOKEN_OPERATOR) {
+							if (token2 != nil) {
+								SI_ASSERT(token2->type == SILEX_TOKEN_OPERATOR);
 								token3 = si_arrayAt(action->values, i + 2);
 								SI_ASSERT_MSG(token3 != nil, "Expected an expression after the operator.");
 
-								init.type = SC_INIT_BINARY;
-								init.value.binary.left = token1;
-								init.value.binary.operator = token2->token.operator;
-								init.value.binary.right = token3;
+								init->type = SC_INIT_BINARY;
+								init->value.binary.left = token1;
+								init->value.binary.operator = token2->token.operator;
+								init->value.binary.right = token3;
 								i += 2;
 								break;
 							}
 
-							init.type = SC_INIT_CONSTANT;
-							init.value.constant = token1->token.constant;
+							init->type = SC_INIT_CONSTANT;
+							init->value.constant = token1->token.constant;
+							break;
+						}
+
+						case SILEX_TOKEN_OPERATOR: {
+							SI_ASSERT(token2 != nil);
+							init->type = SC_INIT_BINARY;
+							init->value.binary.left = nil;
+							init->value.binary.operator = token1->token.operator;
+							init->value.binary.right = token2;
+
+							i += 1;
 							break;
 						}
 
 						default: SI_PANIC();
 					}
-
-					si_arrayPush(&node.value.var.initializers, init);
 				}
+
 				break;
 			}
 			default: continue;
@@ -495,20 +518,45 @@ retry2_to_remove_later:
 
 #if 1
 	ts = si_timeStampStart();
+
 	for_range (i, 0, si_arrayLen(ast)) {
 		scAstNode* node = &ast[i];
+		scInitializer* prevInit = nil;
 
 		switch (node->type) {
 			case SC_AST_VAR_MAKE: {
-				siArray(scInitializer) initializers = node->value.var.initializers;
-				for_range (j, 0, si_arrayLen(initializers)) {
-					scInitializer* init = &initializers[j];
+				scInitializer* inits = node->value.var.init;
+				scInitializer* init = inits;
 
+				while (init != nil) {
 					switch (init->type) {
 						case SC_INIT_BINARY: {
 							scTokenStruct* left = init->value.binary.left,
 										  *right = init->value.binary.right;
-							if (left->type == SILEX_TOKEN_CONSTANT && left->type == right->type) {
+
+							si_printf("%p %p\n", left, right);
+
+							if (left == nil) {
+								switch (prevInit->type) {
+									case SC_INIT_CONSTANT: {
+										init->type = SC_INIT_CONSTANT;
+
+										scConstant constant = prevInit->value.constant;
+										switch (init->value.binary.operator) {
+											case SILEX_OPERATOR_PLUS: constant.value._signed += right->token.constant.value._signed; break;
+											default: SI_PANIC();
+										}
+										
+										prevInit->value.constant = constant;
+										prevInit->next = init->next;
+
+										break;
+									}
+									default: SI_PANIC();
+								}
+
+							}
+							else if (left->type == SILEX_TOKEN_CONSTANT && left->type == right->type) {
 								init->type = SC_INIT_CONSTANT;
 
 								scConstant constant = left->token.constant;
@@ -516,10 +564,16 @@ retry2_to_remove_later:
 									case SILEX_OPERATOR_PLUS: constant.value._signed += right->token.constant.value._signed; break;
 									default: SI_PANIC();
 								}
+
 								init->value.constant = constant;
+								prevInit = init;
 							}
+
+							break;
 						}
 					}
+
+					init = init->next;
 				}
 
 				break;
@@ -551,11 +605,10 @@ retry2_to_remove_later:
 		switch (node->type) {
 			case SC_AST_VAR_MAKE: {
 				scVariable* var = node->value.var.name;
-				siArray(scInitializer) initializers = node->value.var.initializers;
+				scInitializer* inits = node->value.var.init;
 
-				for_range (j, 0, si_arrayLen(initializers)) {
-					scInitializer* init = &initializers[j];
-
+				scInitializer* init = inits;
+				while (init != nil) {
 					switch (init->type) {
 						case SC_INIT_CONSTANT: {
 							scConstant constant = init->value.constant;
@@ -574,6 +627,7 @@ retry2_to_remove_later:
 						}
 						default: SI_PANIC();
 					}
+					init = init->next;
 				}
 
 				break;
@@ -599,6 +653,8 @@ retry2_to_remove_later:
 
 	for_range (i, 0, si_arrayLen(instructions)) {
 		scAsm* instruction = &instructions[i];
+
+		si_printf("%lli %lli %lli\n", instruction->type, instruction->dst, instruction->src);
 
 		switch (instruction->type) {
 			case SC_ASM_PUSH_R64: {
