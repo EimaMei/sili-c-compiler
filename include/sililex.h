@@ -137,9 +137,8 @@ typedef SI_ENUM(u32, scConstantType) {
 typedef struct {
 	scConstantType type;
 	union {
-		i64 _signed;
-		u64 _unsigned;
-		f64 _float;
+		u64 integer;
+		f64 floats;
 	} value;
 } scConstant;
 
@@ -159,8 +158,8 @@ typedef SI_ENUM(u32, scPunctuator) {
 
 typedef SI_ENUM(u32, scOperator) {
 	SILEX_OPERATOR_PLUS = 1,
-	SILEX_OPERATOR_PLUSPLUS,
 	SILEX_OPERATOR_MINUS,
+	SILEX_OPERATOR_PLUSPLUS,
 	SILEX_OPERATOR_MINUSMINUS,
 };
 
@@ -328,6 +327,7 @@ scLexer silex_lexerMake(cstring content, usize len) {
 b32 silex_lexerTokenGet(scLexer* lexer) {
 	SI_STOPIF(lexer->curData >= lexer->end, lexer->type = SILEX_TOKEN_EOF; return false);
 
+	static b32 state = 0;
 	const char* pLetter = lexer->curData;
 	while (si_charIsSpace(*pLetter)) { pLetter += 1; }
 	SI_STOPIF(pLetter >= lexer->end, lexer->type = SILEX_TOKEN_EOF; return false);
@@ -374,29 +374,39 @@ b32 silex_lexerTokenGet(scLexer* lexer) {
 			siFallthrough;
 		}
 
-		case '+': {
+		case '-': case '+': {
+			const char* ogChar = pLetter;
+			pLetter += 1;
+
+			if (*pLetter == *ogChar) {
+				lexer->curData = pLetter + 1;
+				lexer->type = SILEX_TOKEN_OPERATOR;
+				lexer->token.operator = SILEX_OPERATOR_PLUSPLUS + (*ogChar == '-');
+				return true;
+			}
+			else if (si_charIsDigit(*pLetter)) {
+				state |= SI_BIT(2) * (*ogChar == '-');
+				goto num;
+			}
+
 			pLetter += 1;
 			while (si_charIsSpace(*pLetter)) { pLetter += 1; }
 
-			 if (*pLetter == '+') {
-				lexer->curData = pLetter + 1;
-				lexer->type = SILEX_TOKEN_OPERATOR;
-				lexer->token.operator = SILEX_OPERATOR_PLUSPLUS;
-				return true;
-			}
-
 			lexer->curData = pLetter;
 			lexer->type = SILEX_TOKEN_OPERATOR;
-			lexer->token.operator = SILEX_OPERATOR_PLUS;
+			lexer->token.operator = SILEX_OPERATOR_PLUS + (*ogChar == '-');
 			return true;
 		}
 
 
 		case '0': case '1': case '2': case '3': case '4': case '5': case '6': case '7':
 		case '8': case '9': {
-			b32 state = 0; /* NOTE(EimaMei): SI_BIT(0) - is unsigned, SI_BIT(1) - is long, SI_BIT(2) - is negative. */
-			u64 value = 0;
-			u32 base = 10;
+			state = 0; /* NOTE(EimaMei): SI_BIT(0) - is unsigned, SI_BIT(1) - is long, SI_BIT(2) - is negative. */
+			u64 value;
+			u32 base;
+num:
+			value = 0;
+			base = 10;
 
 			while (true) {
 				char x = si_charLower(*pLetter);
@@ -432,12 +442,6 @@ b32 silex_lexerTokenGet(scLexer* lexer) {
 						return false;
 					}
 					case '-': {
-						if ((state & SI_BIT(2)) == 0) {
-							state |= SI_BIT(2);
-							pLetter += 1;
-							continue;
-						}
-
 						lexer->curData = pLetter;
 						lexer->type = SILEX_TOKEN_INVALID;
 						lexer->error = SILEX_ERROR_PREFIX_MINUS;
@@ -454,12 +458,12 @@ b32 silex_lexerTokenGet(scLexer* lexer) {
 			if (state & SI_BIT(2)) {
 				value = -value;
 			}
+
+			constant->value.integer = value;
 			if (state & SI_BIT(0)) {
-				constant->value._unsigned = value;
 				constant->type = SILEX_CONSTANT_NUM_UNSIGNED;
 			}
 			else {
-				constant->value._signed = value;
 				constant->type = SILEX_CONSTANT_NUM_SIGNED;
 			}
 

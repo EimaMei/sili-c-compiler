@@ -1,5 +1,5 @@
 int main(int argc, char** argv) {
-    int x = 222 + 1 + 2 + 3 + 2 + 1 + 0 + 2345324;
+    int x = 22 - 23 + 43 - 11111;
 	int y = 23;
 
 	return 0;
