@@ -9,7 +9,7 @@
 
 typedef SI_ENUM(u32, scTypeTraits) {
 	SC_TYPE_INT      = SI_BIT(0),
-    SC_TYPE_UNSIGNED = SI_BIT(1),
+	SC_TYPE_UNSIGNED = SI_BIT(1),
 	SC_TYPE_FLOAT    = SI_BIT(2),
 	SC_TYPE_CONST    = SI_BIT(3),
 	SC_TYPE_STATIC   = SI_BIT(4),
@@ -19,14 +19,14 @@ typedef SI_ENUM(u32, scTypeTraits) {
 
 typedef struct scType {
 	isize size;
-    scTypeTraits traits;
+	scTypeTraits traits;
 	u32 ptrCount;
 	struct scType* ptr;
 } scType;
 
 typedef struct {
 	scString name;
-    scType type;
+	scType type;
 } scVariable;
 
 typedef SI_ENUM(u32, scActionType) {
@@ -44,9 +44,9 @@ SI_STATIC_ASSERT(sizeof(scAction) == 16);
 
 typedef struct {
 	scType type;
-    scString name;
-    siArray(scVariable) parameters;
-    siArray(scVariable) scope;
+	scString name;
+	siArray(scVariable) parameters;
+	siArray(scVariable) scope;
 	siArray(scAction) code;
 	u32 stack;
 } scFunction;

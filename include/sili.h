@@ -5300,7 +5300,7 @@ b32 si_pathCreateFolderEx(cstring path, siFilePermissions perms) {
 #if !defined(SI_SYSTEM_WINDOWS)
 force_inline
 i32 si__unlinkCb(cstring path, const struct stat* sb, i32 typeflag, struct FTW* ftwbuf) {
-    return remove(path);
+	return remove(path);
 	SI_UNUSED(sb); SI_UNUSED(typeflag); SI_UNUSED(ftwbuf);
 }
 #endif
