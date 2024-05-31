@@ -204,7 +204,7 @@ siAllocator* alloc[SC_ALLOC_LEN];
 
 
 typedef SI_ENUM(u32, scAsmType) {
-	SC_ASM_PUSH_R64,
+	SC_ASM_PUSH_R64 = 1,
 	SC_ASM_POP_R64,
 
 	SC_ASM_LD_M8_I8,
@@ -256,6 +256,7 @@ retry:
 			si_arrayPush(&action->values, token);
 			goto retry;
 	}
+
 }
 
 #define sc_actionEvaluate(action, node) \
@@ -309,11 +310,48 @@ void sc_actionEvaluateEx(scAction* action, scAstNode* node, usize i) {
 				i += 1;
 				break;
 			}
+			case SILEX_TOKEN_IDENTIFIER: {
+				if (token2 != nil) {
+					SI_PANIC();
+					SI_ASSERT(token2->type == SILEX_TOKEN_OPERATOR);
+					token3 = si_arrayAt(action->values, i + 2);
+					SI_ASSERT_MSG(token3 != nil, "Expected an expression after the operator.");
+
+					init->type = SC_INIT_BINARY;
+					init->value.binary.left = token1;
+					init->value.binary.operator = token2->token.operator;
+					init->value.binary.right = token3;
+					i += 2;
+					break;
+				}
+
+				init->type = SC_INIT_IDENTIFIER;
+				init->value.identifier = token1->token.identifier;
+				break;
+			}
+
 
 			default: SI_PANIC();
 		}
 	}
 }
+
+#ifndef SILEX_HASH_FUNC_INIT
+	#define SILEX_HASH_FUNC_INIT(hash) SILEX_HASH_TYPE hash = 14695981039346656037UL
+#endif
+
+#ifndef SILEX_HASH_FUNC
+	#define SILEX_HASH_FUNC(hash, character) \
+		do { \
+			(hash) ^= (u64)(character); \
+			(hash) *= 1099511628211UL; \
+		} while (0)
+	#endif
+
+#ifndef SILEX_HASH_FUNC_END
+	#define SILEX_HASH_FUNC_END(hash)
+#endif
+
 
 int main(void) {
 #if 0
@@ -381,7 +419,7 @@ int main(void) {
 
 				if (type.size != -1) {
 					SI_ASSERT(lex.type == SILEX_TOKEN_IDENTIFIER);
-					scString name = lex.token.text;
+					scString name = lex.token.identifier;
 
 					b32 res = silex_lexerTokenGet(&lex);
 					SI_ASSERT(res && lex.type == SILEX_TOKEN_PUNCTUATOR);
@@ -401,7 +439,7 @@ int main(void) {
 								SI_ASSERT(res && lex.type == SILEX_TOKEN_IDENTIFIER);
 
 								scVariable var;
-								var.name = lex.token.text;
+								var.name = lex.token.identifier;
 								var.type = type;
 
 								si_arrayPush(&func->parameters, var);
@@ -458,6 +496,7 @@ int main(void) {
 						si_arrayPush(&curFunc->code, action);
 						break;
 					}
+					default: SI_PANIC();
 				}
 				break;
 			}
@@ -522,8 +561,8 @@ int main(void) {
 
 			case SC_ACTION_RETURN: {
 				node.type = SC_AST_RETURN;
-
 				sc_actionEvaluate(action, &node);
+				si_printf("%p %p\n", node.init->value.binary.left, node.init->value.binary.right);
 				break;
 			}
 			default: SI_PANIC();
@@ -574,11 +613,16 @@ int main(void) {
 
 					break;
 				}
+				case SC_INIT_IDENTIFIER: {
+					si_printf("wtf\n");
+					siFallthrough;
+				}
+				case SC_INIT_CONSTANT: break;
+				default: SI_PANIC();
 			}
 
 			init = init->next;
 		}
-
 	}
 	si_timeStampPrintSince(ts);
 #endif
@@ -632,7 +676,6 @@ int main(void) {
 				break;
 			}
 			case SC_AST_RETURN: {
-				scVariable* var = node->extra.var;
 				scInitializer* inits = node->init;
 
 				scInitializer* init = inits;
@@ -640,7 +683,7 @@ int main(void) {
 					switch (init->type) {
 						case SC_INIT_CONSTANT: {
 							scConstant constant = init->value.constant;
-							switch (var->type.size) {
+							switch (curFunc->type.size) {
 								case 4: {
 									asm.type = SC_ASM_RET_I32;
 									asm.src = constant.value.integer;
@@ -673,7 +716,6 @@ int main(void) {
 	SI_ASSERT(bytes < SI_MEGA(1));
 
 
-	u8 out[16];
 	usize x86Len = 0;
 	u8* x86 = si_mallocArray(alloc[SC_X86ASM], u8, 4 * si_arrayLen(instructions));
 
@@ -683,53 +725,55 @@ int main(void) {
 		scAsm* instruction = &instructions[i];
 		usize len;
 
-
 		switch (instruction->type) {
 			case SC_ASM_PUSH_R64: {
-				len = 0;
+				x86[x86Len] = X86_PUSH_R64 + RBP;
+				len = 1;
+				len += sc_x86Opcode(
+					X86_MOV_RM64_R64,
+					X86_CFG_REX_PREFIX | X86_CFG_RMB | X86_CFG_64BIT | X86_CFG_DST_R | X86_CFG_SRC_R,
+					RBP,
+					RSP,
+					&x86[x86Len + len]
+				);
+
+				x86Len += len;
 				break;
 			}
 
 			case SC_ASM_LD_M32_I32: {
 				len = sc_x86Opcode(
 					X86_MOV_RM32_I32,
-					X86_CFG_RMB | X86_CFG_ID,
+					X86_CFG_RMB | X86_CFG_ID | X86_CFG_DST_M | X86_CFG_SRC_R,
 					instruction->dst,
 					instruction->src,
-					out
+					&x86[x86Len]
 				);
 
-				memcpy(&x86[x86Len], out, len);
 				x86Len += len;
 				break;
 			}
 
 			case SC_ASM_RET_I32: {
-				si_printf("%i\n", instruction->src);
 				len = sc_x86Opcode(
 					X86_MOV_R32_I32,
-					X86_CFG_ID,
-					RAX,
+					X86_CFG_ID | X86_CFG_DST_R | X86_CFG_SRC_M,
+					EAX,
 					instruction->src,
-					out
+					&x86[x86Len]
 				);
+				x86[x86Len + len] = X86_POP_R64 + RBP;
+				x86[x86Len + len + 1] = X86_RET;
+				len += 2;
 
-				len += sc_x86Opcode(
-					X86_RET,
-					0,
-					0,
-					0,
-					&out[len]
-				);
-
-				memcpy(&x86[x86Len], out, len);
 				x86Len += len;
 				break;
 			}
 		}
 
+		si_print("\t");
 		for_range (j, 0, len) {
-			si_printf("%ll#X ", out[j]);
+			si_printf("%ll#X ", x86[x86Len - len + j]);
 		}
 		si_print("\n");
 	}

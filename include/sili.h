@@ -1782,6 +1782,9 @@ i32 si_charHexDigitToInt(char c);
 
 #define SI_NUM_MAX_DIGITS 20
 
+
+extern const char* SI_NUM_TO_CHAR_TABLE;
+
 /* Writes a NULL-terminated C-string into the allocator. */
 char* si_cstrMake(siAllocator* alloc, cstring cstr);
 /* Writes a C-string with specified length into the allocator. */
@@ -4331,7 +4334,7 @@ b32 si_cstrEqualLen(cstring str1, usize str1Len, cstring str2, usize str2Len) {
 	return true;
 }
 
-static const char SI_NUM_TO_CHAR_TABLE[] =
+const char* SI_NUM_TO_CHAR_TABLE =
 	"0123456789"
 	"ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 	"abcdefghijklmnopqrstuvwxyz"
