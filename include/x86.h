@@ -104,7 +104,7 @@ usize sc_x86Opcode(u8 opcode, siX86Config config, u32 dst, u32 src, u8* out) {
 		out[i] = X86RMBYTE(mod, reg, rm), i += 1;
 
 		if (mod == X86_OPERAND_M8) {
-			u8 val = -src;
+			u8 val = -(u8)dst;
 			memcpy(&out[i], &val, 1), i += 1;
 		}
 		else if (mod == X86_OPERAND_M32) {SI_PANIC(); }

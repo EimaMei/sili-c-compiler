@@ -97,6 +97,11 @@ MACROS
 	proper replacement.
 
 	- SI_NO_TYPEOF - disables the usage of '__typeof__' inside of the library.
+	NOTE: Might break certain features in the library.
+
+	- SI_DEFINE_CUSTOM_HASH_FUNCTION - undefines the base implementation of
+	'si__hashKey' inside this file, creating the option of defining a custom
+	implementation.
 
 ===========================================================================
 CREDITS
@@ -1887,7 +1892,7 @@ siSiliStr si_siliStrMakeFmt(siAllocator* alloc, cstring str, ...);
 
 typedef struct {
 	/* Key of the value. */
-	siByte* key;
+	u64 key;
 	/* Pointer to the value. */
 	rawptr value;
 } siHashEntry;
@@ -1906,12 +1911,13 @@ rawptr si_hashtableGet(const siHashTable ht, const rawptr key, usize keyLen);
  * Returns the key entry's value as the specified type. If the item does NOT exist,
  * this will 100% crash, as the return of 'si_hashtableGet' will be nil. */
 #define si_hashtableGetItem(ht, key, type) (*((type*)si_hashtableGet(ht, key)))
-/* Adds a 'key' entry to the hash table.
- * NOTE(EimaMei): This functions makes a copy of the specified key pointer by allocating
- * its length amount to the allocator. The value, provided by 'valuePtr', is NOT
- * copied, thus you are responsible for that pointer being valid for getter calls. */
-siHashEntry* si_hashtableSet(siHashTable ht, siAllocator* allocator, const rawptr key,
-		usize keyLen, const rawptr valuePtr);
+/* Returns the key entry's value pointer from the hash table. If not found, nil
+ * is returned. */
+rawptr si_hashtableGetWithHash(const siHashTable ht, u64 hash);
+/* Adds a 'key' entry to the hash table. */
+siHashEntry* si_hashtableSet(siHashTable ht, const rawptr key, usize keyLen,
+		const rawptr valuePtr);
+siHashEntry* si_hashtableSetWithHash(const siHashTable ht, u64 hash, const rawptr valuePtr);
 
 #endif /* SI_NO_HASHTABLE */
 
@@ -4932,6 +4938,10 @@ i32 si_charHexDigitToInt(char c) {
 
 #if defined(SI_IMPLEMENTATION_HASHTABLE) && !defined(SI_NO_HASHTABLE)
 
+force_inline
+u64 si__hashKey(siByte* key, usize len);
+
+#if !defined(SI_DEFINE_CUSTOM_HASH_FUNCTION)
 #define SI__FNV_OFFSET 14695981039346656037UL
 #define SI__FNV_PRIME 1099511628211UL
 
@@ -4945,10 +4955,12 @@ u64 si__hashKey(siByte* key, usize len) {
 	}
 	return hash;
 }
-
-
 #undef SI__FNV_OFFSET
 #undef SI__FNV_PRIME
+
+#endif
+
+
 
 
 siHashTable si_hashtableMake(siAllocator* alloc, const rawptr* keyArray, usize keyLen,
@@ -4965,7 +4977,7 @@ siHashTable si_hashtableMake(siAllocator* alloc, const rawptr* keyArray, usize k
 
 	siByte* ptr = (siByte*)dataArray;
 	for_range (i, 0, len) {
-		si_hashtableSet(table, alloc, keyArray[i], keyLen, ptr);
+		si_hashtableSet(table, keyArray[i], keyLen, ptr);
 		ptr += sizeofElement;
 	}
 
@@ -4974,6 +4986,9 @@ siHashTable si_hashtableMake(siAllocator* alloc, const rawptr* keyArray, usize k
 
 SIDEF
 siHashTable si_hashtableMakeReserve(siAllocator* alloc, usize capacity) {
+	SI_ASSERT(capacity != 0);
+	SI_ASSERT((capacity & (capacity - 1)) == 0);
+
 	siHashTable table = si_arrayMakeReserve(alloc, sizeof(siHashEntry), capacity);
 	memset(table, 0, capacity * sizeof(siHashEntry));
 
@@ -4987,30 +5002,28 @@ rawptr si_hashtableGet(const siHashTable ht, rawptr key, usize keyLen) {
 	SI_STOPIF(si_arrayLen(ht) == 0, return nil);
 
 	u64 hash = si__hashKey(key, keyLen);
-	usize index = (usize)(hash % (si_arrayCapacity(ht) - 1));
+	return si_hashtableGetWithHash(ht, hash);
+}
+SIDEF
+rawptr si_hashtableGetWithHash(const siHashTable ht, u64 hash) {
+	usize index = hash & (si_arrayCapacity(ht) - 1);
 
 	siHashEntry* entry = &ht[index];
 	siHashEntry* original = entry;
 	siHashEntry* end = &ht[si_arrayCapacity(ht)];
 	do {
-		SI_STOPIF(entry->key == nil, goto increment_entry);
-		// TODO(EimaMei): Have a usize in the structure that would point to the next valid one?
-
-		if (*(siByte*)key == *entry->key && memcmp((siByte*)key + 1, entry->key + 1, keyLen - 1) == 0) {
-			return entry->value;
+		if (hash == entry->key) {
+			return ht[index].value;
 		}
 
-increment_entry:
 		entry += 1;
-		if (entry == end) {
-			entry = ht;
-		}
+		SI_STOPIF(entry == end, entry = &ht[0]);
 	} while (entry != original);
 
 	return nil;
 }
-siHashEntry* si_hashtableSet(siHashTable ht, siAllocator* alloc, const rawptr key,
-		usize keyLen, const rawptr valuePtr) {
+siHashEntry* si_hashtableSet(siHashTable ht, const rawptr key, usize keyLen,
+		const rawptr valuePtr) {
 	SI_ASSERT_NOT_NULL(ht);
 	SI_ASSERT_NOT_NULL(key);
 	SI_ASSERT(keyLen != 0);
@@ -5019,26 +5032,32 @@ siHashEntry* si_hashtableSet(siHashTable ht, siAllocator* alloc, const rawptr ke
 	SI_ASSERT_MSG(header->len < header->capacity, "The capacity of the hashtable has been surpassed.");
 
 	u64 hash = si__hashKey(key, keyLen);
-	usize index = hash % (header->capacity - 1);
 
+	return si_hashtableSetWithHash(ht, hash, valuePtr);
+}
+SIDEF
+siHashEntry* si_hashtableSetWithHash(const siHashTable ht, u64 hash, const rawptr valuePtr) {
+	siArrayHeader* header = SI_ARRAY_HEADER(ht);
+
+	usize index = hash & (header->capacity - 1);
 	siHashEntry* entry = &ht[index];
 	siHashEntry* end = &ht[header->capacity];
 
-	while (entry->key != nil) {
-		if (*(siByte*)key == *entry->key && memcmp((siByte*)key + 1, entry->key + 1, keyLen - 1) == 0) {
+	while (entry->key != 0) {
+		if (hash == entry->key) {
 			return &ht[index];
 		}
 
 		entry += 1;
 		SI_STOPIF(entry == end, entry = &ht[0]);
 	}
-	entry->key = si_mallocArray(alloc, siByte, keyLen);
-	memcpy(entry->key, key, keyLen);
+	entry->key = hash;
 	entry->value = valuePtr;
 
 	header->len += 1;
 	return &ht[index];
 }
+
 #endif
 
 #if defined(SI_IMPLEMENTATION_IO) && !defined(SI_NO_IO)

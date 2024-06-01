@@ -359,7 +359,6 @@ b32 silex_lexerTokenGet(scLexer* lexer) {
 					pLetter += 1;
 				}
 				lexer->curData = pLetter;
-
 				usize len = pLetter - start;
 
 				if (len <= 8) {
@@ -374,7 +373,7 @@ b32 silex_lexerTokenGet(scLexer* lexer) {
 					}
 				}
 
-				lexer->__state = 0;
+				lexer->__state = SC__STATE_NUM_EXISTS;
 				lexer->type = SILEX_TOKEN_IDENTIFIER;
 #ifndef SILEX_NO_LEN
 				lexer->token.identifier.len = len;
