@@ -1787,7 +1787,6 @@ i32 si_charHexDigitToInt(char c);
 
 #define SI_NUM_MAX_DIGITS 20
 
-
 extern const char* SI_NUM_TO_CHAR_TABLE;
 
 /* Writes a NULL-terminated C-string into the allocator. */

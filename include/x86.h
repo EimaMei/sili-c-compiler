@@ -1,6 +1,6 @@
 #include <sili.h>
 
-typedef SI_ENUM(u32, scX86Register) {
+typedef SI_ENUM(u32, x86Register) {
 	RAX = 0,
 	RCX,
 	RDX,
@@ -9,6 +9,14 @@ typedef SI_ENUM(u32, scX86Register) {
 	RBP,
 	RSI,
 	RDI,
+	R8,
+	R9,
+	R10,
+	R11,
+	R12,
+	R13,
+	R14,
+	R15,
 
 	EAX = 0,
 	ECX,
@@ -20,6 +28,18 @@ typedef SI_ENUM(u32, scX86Register) {
 	EDI,
 
 };
+
+typedef SI_ENUM(u32, x86CallingConvention) {
+	X86_CALLING_CONV_C = 1,
+	X86_CALLING_CONV_SYSTEM_V_I386,
+	X86_CALLING_CONV_SYSTEM_V_X86,
+	X86_CALLING_CONV_MICROSOFT,
+};
+
+typedef struct {
+	x86CallingConvention conv;
+	b16 registers;
+} x86EnvironmentState;
 
 
 #define X86REX(w, r, x, b) ((u8)0x40 | ((u8)(w) << 3) | ((u8)(r) << 2) | ((u8)(x) << 1) | (u8)(b))
@@ -38,13 +58,13 @@ typedef SI_ENUM(u32, scX86Register) {
 #define X86_RET 0xC3
 #define X86_MOV_RM32_I32 0xC7
 
-typedef SI_ENUM(u8, scX86OperandType) {
+typedef SI_ENUM(u8, x86OperandType) {
 	X86_OPERAND_M8 = 1,
 	X86_OPERAND_M32,
 	X86_OPERAND_REG
 };
 
-typedef SI_ENUM(u32, siX86Config) {
+typedef SI_ENUM(u32, x86Config) {
 	X86_CFG_64BIT = SI_BIT(0),
 	X86_CFG_REX_PREFIX = SI_BIT(1),
 	X86_CFG_ID = SI_BIT(2),
@@ -61,13 +81,13 @@ typedef SI_ENUM(u32, siX86Config) {
 
 
 force_inline
-usize sc_x86Opcode(u8 opcode, siX86Config config, u32 dst, u32 src, u8* out) {
+usize sc_x86Opcode(u8 opcode, x86Config config, u32 dst, u32 src, u8* out) {
 	SI_ASSERT(config == 0 || (config & (X86_CFG_DST_BITS | X86_CFG_SRC_BITS)) != 0);
 	SI_ASSERT((config & (X86_CFG_DST_BITS)) != X86_CFG_DST_BITS);
 	SI_ASSERT((config & (X86_CFG_SRC_BITS)) != X86_CFG_SRC_BITS);
 	usize i = 0;
 
-	if (config & X86_CFG_REX_PREFIX) {
+	if (config & (X86_CFG_REX_PREFIX | X86_CFG_64BIT)) {
 		out[i] = X86REX(((config & X86_CFG_64BIT) != 0), 0, 0, 0);
 		i += 1;
 	}
@@ -76,7 +96,7 @@ usize sc_x86Opcode(u8 opcode, siX86Config config, u32 dst, u32 src, u8* out) {
 
 	if (config & X86_CFG_RMB) {
 		u8 mod, reg, rm;
-		if (config & (X86_CFG_DST_R | X86_CFG_SRC_R)) {
+		if ((config & (X86_CFG_DST_R | X86_CFG_SRC_R)) == (X86_CFG_DST_R | X86_CFG_SRC_R)) {
 			mod = X86_OPERAND_REG;
 		}
 		else {
@@ -114,4 +134,25 @@ usize sc_x86Opcode(u8 opcode, siX86Config config, u32 dst, u32 src, u8* out) {
 		memcpy(&out[i], &src, 4), i += 4;
 	}
 	return i;
+}
+
+
+x86Register sc_x86PickFunctionArg(x86EnvironmentState* state) {
+	switch (state->conv) {
+		case X86_CALLING_CONV_SYSTEM_V_X86: {
+			u32 regs[] = {RDI, RSI, RDX, RCX, R8, R9};
+			for_range (i, 0, countof(regs)) {
+				u32 reg = SI_BIT(regs[i]);
+
+				if ((state->registers & reg) == 0) {
+					state->registers |= reg;
+					return regs[i];
+				}
+			}
+			/* TODO(EimaMei): Suprogramuoti atvėjį funkcijos parametrų ilgiui
+			 * viršijant daugiau negu 7, t. y., kai rietuvėje yra likusieji parametrai.*/
+			SI_PANIC();
+		}
+		default: SI_PANIC();
+	}
 }
