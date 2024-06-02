@@ -4,6 +4,7 @@
 #define SILEX_NO_LEN
 #include <sililex.h>
 #include <x86.h>
+#include <exegen.h>
 
 
 typedef SI_ENUM(u32, scInitializerType) {
@@ -29,7 +30,7 @@ typedef struct scInitializer {
 
 typedef SI_ENUM(u32, scAstNodeType) {
 	SC_AST_VAR_MAKE = 1,
-					SC_AST_RETURN
+	SC_AST_RETURN
 };
 
 
@@ -187,6 +188,7 @@ typedef SI_ENUM(u32, scIndex) {
 	SC_AST,
 	SC_ASM,
 	SC_X86ASM,
+	SC_EXE,
 
 	SC_ALLOC_LEN
 };
@@ -548,8 +550,8 @@ start:
 	siArray(scAstNode) ast = si_arrayMakeReserve(alloc[SC_AST], sizeof(scAstNode), si_arrayLen(curFunc->code));
 
 	ts = si_timeStampStart();
+	SILEX_HASH_FUNC_INIT(hash_main);
 	{
-		SILEX_HASH_FUNC_INIT(hash_main);
 		for_range (i, 0, 4) {
 			SILEX_HASH_FUNC(hash_main, "main"[i]);
 		}
@@ -855,16 +857,40 @@ start:
 			}
 
 			case SC_ASM_RET_I32: {
-				len = sc_x86Opcode(
-					X86_MOV_R32_I32,
-					X86_CFG_ID | X86_CFG_DST_R | X86_CFG_SRC_M,
-					EAX,
-					instruction->src,
-					&x86[x86Len]
-				);
-				x86[x86Len + len] = X86_POP_R64 + RBP;
-				x86[x86Len + len + 1] = X86_RET;
-				len += 2;
+				if (curFunc->name.hash != hash_main) {
+					len = sc_x86Opcode(
+						X86_MOV_R32_I32,
+						X86_CFG_ID | X86_CFG_DST_R,
+						RAX,
+						instruction->src,
+						&x86[x86Len]
+					);
+					x86[x86Len + len] = X86_POP_R64 + RBP;
+
+					x86[x86Len + len + 1] = X86_RET;
+					len += 2;
+				}
+				else {
+					len = sc_x86Opcode(
+						X86_MOV_RM32_I32,
+						X86_CFG_RMB | X86_CFG_ID | X86_CFG_DST_R | X86_CFG_64BIT,
+						RAX,
+						60,
+						&x86[x86Len]
+					);
+					len += sc_x86Opcode(
+						X86_MOV_RM32_I32,
+						X86_CFG_ID | X86_CFG_RMB | X86_CFG_DST_R,
+						EDI,
+						instruction->src,
+						&x86[x86Len + len]
+					);
+
+					x86[x86Len + len] = X86_POP_R64 + RBP;
+					x86[x86Len + len + 1] = (X86_SYSCALL & 0xFF00) >> 8;
+					x86[x86Len + len + 2] = X86_SYSCALL & 0x00FF;
+					len += 3;
+				}
 
 				x86Len += len;
 				break;
@@ -875,13 +901,34 @@ start:
 
 		si_print("\t");
 		for_range (j, 0, len) {
-			si_printf("%ll#X ", x86[x86Len - len + j]);
+			si_printf("%ll02X ", x86[x86Len - len + j]);
 		}
 		si_print("\n");
 	}
 
 	si_timeStampPrintSince(ts);
 #endif
+
+#if 1
+	ts = si_timeStampStart();
+
+	usize elfSize = sizeof(elf64ElfHeader) + sizeof(elf64ProgramHeader);
+	usize fileLen = elfSize + x86Len;
+
+	alloc[SC_EXE] = si_allocatorMake(fileLen);
+	u8* buf = si_mallocArray(alloc[SC_EXE], u8, fileLen);
+
+	elf64_elfHeaderMake((elf64ElfHeader*)&buf[0], true, ELFOSABI_NONE, EM_X86_64);
+	elf64_programHeaderMake((elf64ProgramHeader*)&buf[sizeof(elf64ElfHeader)], fileLen);
+	memcpy(&buf[elfSize], x86, x86Len);
+
+	siFile exe = si_fileCreate("a.out");
+	si_fileWriteLen(&exe, buf, fileLen);
+	si_fileClose(exe);
+
+	si_timeStampPrintSince(ts);
+#endif
+
 	for_range (i, 0, countof(alloc)) {
 		si_allocatorFree(alloc[i]);
 	}

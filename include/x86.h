@@ -58,6 +58,8 @@ typedef struct {
 #define X86_RET 0xC3
 #define X86_MOV_RM32_I32 0xC7
 
+#define X86_SYSCALL 0x0F05
+
 typedef SI_ENUM(u8, x86OperandType) {
 	X86_OPERAND_M8 = 1,
 	X86_OPERAND_M32,
@@ -96,7 +98,7 @@ usize sc_x86Opcode(u8 opcode, x86Config config, u32 dst, u32 src, u8* out) {
 
 	if (config & X86_CFG_RMB) {
 		u8 mod, reg, rm;
-		if ((config & (X86_CFG_DST_R | X86_CFG_SRC_R)) == (X86_CFG_DST_R | X86_CFG_SRC_R)) {
+		if (config & X86_CFG_DST_R) {
 			mod = X86_OPERAND_REG;
 		}
 		else {
@@ -149,8 +151,8 @@ x86Register sc_x86PickFunctionArg(x86EnvironmentState* state) {
 					return regs[i];
 				}
 			}
-			/* TODO(EimaMei): Suprogramuoti atvėjį funkcijos parametrų ilgiui
-			 * viršijant daugiau negu 7, t. y., kai rietuvėje yra likusieji parametrai.*/
+			/* TODO(EimaMei): Suprogramuoti atvėjį, kai funkcijos parametrų ilgis
+			 * viršija daugiau negu 6, t. y., kai likusieji parametrai yra rietuvėje.*/
 			SI_PANIC();
 		}
 		default: SI_PANIC();
