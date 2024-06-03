@@ -58,7 +58,8 @@ typedef struct {
 #define X86_RET 0xC3
 #define X86_MOV_RM32_I32 0xC7
 
-#define X86_SYSCALL 0x0F05
+#define X86_SYSCALL_H 0x0F
+#define X86_SYSCALL_L 0x05
 
 typedef SI_ENUM(u8, x86OperandType) {
 	X86_OPERAND_M8 = 1,
@@ -83,7 +84,7 @@ typedef SI_ENUM(u32, x86Config) {
 
 
 force_inline
-usize sc_x86Opcode(u8 opcode, x86Config config, u32 dst, u32 src, u8* out) {
+usize sc_x86Opcode(u8 opcode, x86Config config, u64 dst, u64 src, u8* out) {
 	SI_ASSERT(config == 0 || (config & (X86_CFG_DST_BITS | X86_CFG_SRC_BITS)) != 0);
 	SI_ASSERT((config & (X86_CFG_DST_BITS)) != X86_CFG_DST_BITS);
 	SI_ASSERT((config & (X86_CFG_SRC_BITS)) != X86_CFG_SRC_BITS);
@@ -98,7 +99,7 @@ usize sc_x86Opcode(u8 opcode, x86Config config, u32 dst, u32 src, u8* out) {
 
 	if (config & X86_CFG_RMB) {
 		u8 mod, reg, rm;
-		if (config & X86_CFG_DST_R) {
+		if (config & X86_CFG_DST_R && (config & X86_CFG_SRC_M) == 0) {
 			mod = X86_OPERAND_REG;
 		}
 		else {
@@ -110,13 +111,13 @@ usize sc_x86Opcode(u8 opcode, x86Config config, u32 dst, u32 src, u8* out) {
 				reg = src;
 				break;
 			case X86_CFG_SRC_M:
-				reg = 0;
+				reg = dst;
 				break;
 		}
 
 		switch (config & X86_CFG_DST_BITS) {
 			case X86_CFG_DST_R:
-				rm = dst;
+				rm = (config & X86_CFG_SRC_M) ? RBP : dst;
 				break;
 			case X86_CFG_DST_M:
 				rm = RBP;

@@ -18,3 +18,4 @@ Dockerfile
 build/**
 test
 languages/*.sfg
+a.out

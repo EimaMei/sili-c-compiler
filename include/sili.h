@@ -1889,11 +1889,13 @@ siSiliStr si_siliStrMakeFmt(siAllocator* alloc, cstring str, ...);
  * Denotes that this is a 'siHashTable' variable. */
 #define siHt(type) siHashTable
 
-typedef struct {
+typedef struct siHashEntry {
 	/* Key of the value. */
 	u64 key;
 	/* Pointer to the value. */
 	rawptr value;
+	/* Points to the next valid item. */
+	struct siHashEntry* next;
 } siHashEntry;
 
 typedef siArray(siHashEntry) siHashTable;
@@ -4989,7 +4991,16 @@ siHashTable si_hashtableMakeReserve(siAllocator* alloc, usize capacity) {
 	SI_ASSERT((capacity & (capacity - 1)) == 0);
 
 	siHashTable table = si_arrayMakeReserve(alloc, sizeof(siHashEntry), capacity);
-	memset(table, 0, capacity * sizeof(siHashEntry));
+
+	siHashEntry entry;
+	entry.key = 0;
+	entry.value = nil;
+	for_range (i, 0, capacity - 1) {
+		entry.next = &table[i] + 1;
+		table[i] = entry;
+	}
+	entry.next = &table[0];
+	table[capacity] = entry;
 
 	return table;
 }
@@ -5005,19 +5016,23 @@ rawptr si_hashtableGet(const siHashTable ht, rawptr key, usize keyLen) {
 }
 SIDEF
 rawptr si_hashtableGetWithHash(const siHashTable ht, u64 hash) {
-	usize index = hash & (si_arrayCapacity(ht) - 1);
+	SI_ASSERT_NOT_NULL(ht);
+
+	siArrayHeader* header = SI_ARRAY_HEADER(ht);
+	usize index = hash & (header->capacity - 1);
 
 	siHashEntry* entry = &ht[index];
-	siHashEntry* original = entry;
-	siHashEntry* end = &ht[si_arrayCapacity(ht)];
+	usize limit = 0;
+
 	do {
+		limit += 1;
+
 		if (hash == entry->key) {
-			return ht[index].value;
+			return entry->value;
 		}
 
-		entry += 1;
-		SI_STOPIF(entry == end, entry = &ht[0]);
-	} while (entry != original);
+		entry = entry->next;
+	} while (entry && limit != header->len);
 
 	return nil;
 }
@@ -5027,34 +5042,42 @@ siHashEntry* si_hashtableSet(siHashTable ht, const rawptr key, usize keyLen,
 	SI_ASSERT_NOT_NULL(key);
 	SI_ASSERT(keyLen != 0);
 
-	siArrayHeader* header = SI_ARRAY_HEADER(ht);
-	SI_ASSERT_MSG(header->len < header->capacity, "The capacity of the hashtable has been surpassed.");
-
 	u64 hash = si__hashKey(key, keyLen);
-
 	return si_hashtableSetWithHash(ht, hash, valuePtr);
 }
 SIDEF
 siHashEntry* si_hashtableSetWithHash(const siHashTable ht, u64 hash, const rawptr valuePtr) {
+	SI_ASSERT_NOT_NULL(ht);
+
 	siArrayHeader* header = SI_ARRAY_HEADER(ht);
+	SI_ASSERT_MSG(header->len < header->capacity, "The capacity of the hashtable has been surpassed.");
 
 	usize index = hash & (header->capacity - 1);
 	siHashEntry* entry = &ht[index];
-	siHashEntry* end = &ht[header->capacity];
+	siHashEntry* original = entry;
 
 	while (entry->key != 0) {
 		if (hash == entry->key) {
-			return &ht[index];
+			entry->value = valuePtr;
+			return entry;
 		}
 
-		entry += 1;
-		SI_STOPIF(entry == end, entry = &ht[0]);
+		entry = entry->next;
 	}
+	SI_ASSERT(entry->key == 0);
+
 	entry->key = hash;
 	entry->value = valuePtr;
 
+	if (entry != original) {
+		while (original->next != original + 1) {
+			original = original->next;
+		}
+		original->next = entry;
+	}
+
 	header->len += 1;
-	return &ht[index];
+	return entry;
 }
 
 #endif

@@ -2,6 +2,7 @@
 
 #define SILEX_USE_HASH
 #define SILEX_NO_LEN
+
 #include <sililex.h>
 #include <x86.h>
 #include <exegen.h>
@@ -54,8 +55,9 @@ typedef struct scType {
 typedef struct {
 	scType type;
 	scInitializer* init;
+	u32 stack;
 } scVariable;
-SI_STATIC_ASSERT(sizeof(scVariable) == 32);
+SI_STATIC_ASSERT(sizeof(scVariable) == 40);
 
 typedef struct {
 	scAstNodeType type;
@@ -218,6 +220,7 @@ typedef SI_ENUM(u32, scAsmType) {
 	SC_ASM_LD_M64_I64,
 
 	SC_ASM_RET_I32,
+	SC_ASM_RET_M32,
 };
 
 typedef struct {
@@ -314,7 +317,6 @@ void sc_actionEvaluateEx(scAction* action, scAstNode* node, usize i) {
 			}
 			case SILEX_TOKEN_IDENTIFIER: {
 				if (token2 != nil) {
-					si_printf("%i\n", token2->type);
 					SI_ASSERT(token2->type == SILEX_TOKEN_OPERATOR);
 					token3 = si_arrayAt(action->values, i + 2);
 					SI_ASSERT_MSG(token3 != nil, "Expected an expression after the operator.");
@@ -422,8 +424,31 @@ int main(void) {
 	scope_GLOBAL.scope = si_hashtableMakeReserve(alloc[SC_MAIN], SC_MAX_VARS);
 
 	scFunction* curFunc = &scope_GLOBAL;
-	siHashTable functions = si_hashtableMakeReserve(alloc[SC_MAIN], SC_MAX_FUNCS);
+	siHashTable functions = si_hashtableMakeReserve(alloc[SC_MAIN], 1024);
 #endif
+
+#if 1 /* TESTING THE PERFORMANCE OF si_hashtableGet */
+	u64 hash = 0x8ED4B07B589FB77;
+	for_range (i, 0, 512) {
+		u64 n = rand();
+		while (n == hash) {
+			n = rand();
+		}
+		si_hashtableSetWithHash(functions, n, nil);
+	}
+
+	si_hashtableSetWithHash(functions, hash, functions);
+	siTimeStamp ts2 = si_timeStampStart();
+
+	rawptr n;
+	for_range (i, 1, 1000000) {
+		n = si_hashtableGetWithHash(functions, 0x8ED4B07B589FB77 - 1);
+	}
+	si_timeStampPrintSince(ts2);
+
+	si_printf("%p %ll#X\n", n, hash);
+	SI_PANIC();
+#endif 
 
 #if 1
 	siTimeStamp ts = si_timeStampStart();
@@ -707,6 +732,7 @@ start:
 			default: SI_PANIC();
 		}
 
+		var->stack = curFunc->stack;
 		asm.dst = curFunc->stack;
 		si_arrayPush(&instructions, asm);
 	}
@@ -728,6 +754,8 @@ start:
 							switch (var->type.size) {
 								case 4: {
 									curFunc->stack = si_alignCeilEx(curFunc->stack + 4, 4);
+									var->stack = curFunc->stack;
+
 									asm.type = SC_ASM_LD_M32_I32;
 									asm.dst = curFunc->stack;
 									asm.src = constant.value.integer;
@@ -764,6 +792,19 @@ start:
 							}
 							break;
 						}
+						case SC_INIT_IDENTIFIER: {
+							scVariable* var = si_hashtableGetWithHash(curFunc->scope, init->value.identifier.hash);
+							switch (curFunc->type.size) {
+								case 4: {
+									asm.type = SC_ASM_RET_M32;
+									asm.src = var->stack;
+
+									break;
+								}
+								default: SI_PANIC();
+							}
+							break;
+						}
 						default: SI_PANIC();
 					}
 					init = init->next;
@@ -791,6 +832,7 @@ start:
 	x86EnvironmentState x86state;
 	x86state.conv = X86_CALLING_CONV_SYSTEM_V_X86;
 	x86state.registers = 0;
+	usize offset = sizeof(elf64ElfHeader) + sizeof(elf64ProgramHeader);
 
 	ts = si_timeStampStart();
 
@@ -887,8 +929,8 @@ start:
 					);
 
 					x86[x86Len + len] = X86_POP_R64 + RBP;
-					x86[x86Len + len + 1] = (X86_SYSCALL & 0xFF00) >> 8;
-					x86[x86Len + len + 2] = X86_SYSCALL & 0x00FF;
+					x86[x86Len + len + 1] = X86_SYSCALL_H;
+					x86[x86Len + len + 2] = X86_SYSCALL_L;
 					len += 3;
 				}
 
@@ -896,6 +938,45 @@ start:
 				break;
 			}
 
+			case SC_ASM_RET_M32: {
+				if (curFunc->name.hash != hash_main) {
+					len = sc_x86Opcode(
+						X86_MOV_R32_I32,
+						X86_CFG_ID | X86_CFG_DST_R,
+						RAX,
+						instruction->src,
+						&x86[x86Len]
+					);
+					x86[x86Len + len] = X86_POP_R64 + RBP;
+
+					x86[x86Len + len + 1] = X86_RET;
+					len += 2;
+				}
+				else {
+					len = sc_x86Opcode(
+						X86_MOV_RM32_I32,
+						X86_CFG_RMB | X86_CFG_ID | X86_CFG_DST_R | X86_CFG_64BIT,
+						RAX,
+						60,
+						&x86[x86Len]
+					);
+					len += sc_x86Opcode(
+						X86_MOV_R32_RM32,
+						X86_CFG_RMB | X86_CFG_DST_R | X86_CFG_SRC_M,
+						EDI,
+						instruction->src,
+						&x86[x86Len + len]
+					);
+
+					x86[x86Len + len] = X86_POP_R64 + RBP;
+					x86[x86Len + len + 1] = X86_SYSCALL_H;
+					x86[x86Len + len + 2] = X86_SYSCALL_L;
+					len += 3;
+				}
+
+				x86Len += len;
+				break;
+			}
 			default: SI_PANIC();
 		}
 
