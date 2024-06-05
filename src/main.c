@@ -1,97 +1,17 @@
-#include <sili.h>
-
 #define SILEX_USE_HASH
 #define SILEX_NO_LEN
-
+#include <sili.h>
 #include <sililex.h>
+
+#include <scc.h>
 #include <x86.h>
 #include <exegen.h>
 
-
-typedef SI_ENUM(u32, scInitializerType) {
-	SC_INIT_BINARY = 1,
-	SC_INIT_CONSTANT,
-	SC_INIT_IDENTIFIER
-};
-
-typedef struct scInitializer {
-	scInitializerType type;
-	union {
-		struct {
-			scOperator operator;
-			scTokenStruct* left;
-			scTokenStruct* right;
-		} binary;
-		scConstant constant;
-		scString identifier;
-	} value;
-
-	struct scInitializer* next;
-} scInitializer;
-
-typedef SI_ENUM(u32, scAstNodeType) {
-	SC_AST_VAR_MAKE = 1,
-	SC_AST_RETURN
-};
-
-
-typedef SI_ENUM(u32, scTypeTraits) {
-	SC_TYPE_INT      = SI_BIT(0),
-	SC_TYPE_UNSIGNED = SI_BIT(1),
-	SC_TYPE_FLOAT    = SI_BIT(2),
-	SC_TYPE_CONST    = SI_BIT(3),
-	SC_TYPE_STATIC   = SI_BIT(4),
-	SC_TYPE_FUNC_PTR = SI_BIT(5),
-	SC_TYPE_ARRAY    = SI_BIT(6)
-};
-
-typedef struct scType {
-	isize size;
-	scTypeTraits traits;
-	u32 ptrCount;
-	struct scType* ptr;
-} scType;
-
-typedef struct {
-	scType type;
-	scInitializer* init;
-	u32 stack;
-} scVariable;
-SI_STATIC_ASSERT(sizeof(scVariable) == 40);
-
-typedef struct {
-	scAstNodeType type;
-	scInitializer* init;
-	union {
-		scVariable* var;
-	} extra;
-} scAstNode;
-
-typedef SI_ENUM(u32, scActionType) {
-	SC_ACTION_VAR_ASSIGN = 1,
-	SC_ACTION_VAR_CREATE,
-	SC_ACTION_RETURN,
-};
-
-typedef struct scAction {
-	scActionType type;
-	scTokenStruct* values;
-} scAction;
-SI_STATIC_ASSERT(sizeof(scAction) == 16);
-
-
-typedef struct {
-	scType type;
-	scString name;
-	siHashTable scope;
-	siArray(u32) parameters;
-	siArray(scAction) code;
-	u32 stack;
-} scFunction;
+/* Source */
+#include <scc/scc.c>
 
 
 usize sizeof_SIZE_T = 8;
-
 
 scType type_char = (scType){1, SC_TYPE_INT, 0, nil};
 scType type_short = (scType){2, SC_TYPE_INT, 0, nil};
@@ -101,275 +21,12 @@ scType type_unsigned = (scType){4, SC_TYPE_INT | SC_TYPE_UNSIGNED, 0, nil};
 scType type_float = (scType){4, SC_TYPE_FLOAT, 0, nil};
 scType type_double = (scType){8, SC_TYPE_FLOAT, 0, nil};
 
-#define sc_typeCmp(t1, t2) ((t1)->size == (t2)->size && SI_TO_U64((isize*)(t1) + 1) == SI_TO_U64((isize*)(t2) + 1))
-
-
-#define sc_typeIsVoid(type) ((type)->size == 0)
-
-scType* sc_typeGetFromKeyword(scKeyword keyword) {
-	static scType* types[] = {
-		&type_char, &type_short, &type_int, &type_long,
-		&type_int, &type_unsigned,
-		&type_float, &type_double
-	};
-
-	return types[keyword - SILEX_KEYWORD_CHAR];
-}
-
-
-scType sc_typeGet(scLexer* lex) {
-	SI_ASSERT(lex->type == SILEX_TOKEN_KEYWORD);
-
-	scKeyword keyword = lex->token.keyword;
-	SI_STOPIF(!silex_keywordIsType(keyword), return (scType){.size = -1});
-
-	scType* baseType = sc_typeGetFromKeyword(keyword);
-	scType type = *baseType;
-
-	b32 signedModifier = false;
-	b32 res;
-retry:
-	res = silex_lexerTokenGet(lex);
-	SI_ASSERT(res);
-
-	switch (lex->type) {
-		case SILEX_TOKEN_PUNCTUATOR: {
-			scPunctuator punct = lex->token.punctuator;
-			SI_ASSERT(punct == '*');
-
-			if (type.ptrCount == 0) {
-				type.ptr = baseType;
-				type.size = sizeof_SIZE_T;
-			}
-			type.ptrCount += 1;
-			goto retry;
-		}
-
-		case SILEX_TOKEN_KEYWORD: {
-			switch (lex->token.keyword) {
-				case SILEX_KEYWORD_CHAR:
-				case SILEX_KEYWORD_SHORT:
-				case SILEX_KEYWORD_INT:
-				case SILEX_KEYWORD_LONG: {
-					SI_ASSERT_MSG(si_betweenu(keyword, SILEX_KEYWORD_SIGNED, SILEX_KEYWORD_UNSIGNED), "You cannot have multiple types.");
-					SI_ASSERT_MSG(signedModifier == false, "You cannot have multiple signed modifiers.");
-					SI_ASSERT_MSG(type.traits & SC_TYPE_INT, "Signed modifiers cannot be used for non-integers.");
-
-					type = *sc_typeGetFromKeyword(lex->token.keyword);
-					if (keyword == SILEX_KEYWORD_UNSIGNED) {
-						type.traits |= SC_TYPE_UNSIGNED;
-					}
-					goto retry;
-				}
-
-				case SILEX_KEYWORD_UNSIGNED: {
-					SI_ASSERT_MSG(!si_betweenu(keyword, SILEX_KEYWORD_SIGNED, SILEX_KEYWORD_UNSIGNED), "You cannot have multiple signed modifiers.");
-					SI_ASSERT_MSG(type.traits & SC_TYPE_INT, "Signed modifiers cannot be used for non-integers.");
-
-					if (lex->token.keyword == SILEX_KEYWORD_UNSIGNED) {
-						type.traits |= SC_TYPE_UNSIGNED;
-					}
-
-					goto retry;
-				}
-
-				default: SI_PANIC();
-			}
-			break;
-		}
-	}
-
-	return type;
-}
-
-
-typedef SI_ENUM(u32, scIndex) {
-	SC_FILE,
-	SC_MAIN,
-
-	SC_AST,
-	SC_ASM,
-	SC_X86ASM,
-	SC_EXE,
-
-	SC_ALLOC_LEN
-};
-
-siAllocator* alloc[SC_ALLOC_LEN];
 
 #define SC_MAX_FUNCS 128
 
 #define SC_MAX_VARS 128
 #define SC_MAX_ACTIONS 128
 #define SC_MAX_INITIALIZERS 32
-
-
-typedef SI_ENUM(u32, scAsmType) {
-	SC_ASM_PUSH_R64 = 1,
-	SC_ASM_POP_R64,
-
-	SC_ASM_LD_M8_FUNC_PARAM,
-	SC_ASM_LD_M16_FUNC_PARAM,
-	SC_ASM_LD_M32_FUNC_PARAM,
-	SC_ASM_LD_M64_FUNC_PARAM,
-
-	SC_ASM_LD_M8_I8,
-	SC_ASM_LD_M16_I16,
-	SC_ASM_LD_M32_I32,
-	SC_ASM_LD_M64_I32,
-	SC_ASM_LD_M64_I64,
-
-	SC_ASM_RET_I32,
-	SC_ASM_RET_M32,
-};
-
-typedef struct {
-	scAsmType type;
-	u64 dst;
-	u64 src;
-} scAsm;
-
-void sc_initializerConstantCalc(scInitializer* init, scOperator operator, scTokenStruct* right) {
-	init->type = SC_INIT_CONSTANT;
-
-	scConstant* constant = &init->value.constant;
-	switch (operator) {
-		case SILEX_OPERATOR_PLUS:
-			constant->value.integer += right->token.constant.value.integer;
-			break;
-		case SILEX_OPERATOR_MINUS:
-			constant->value.integer -= right->token.constant.value.integer;
-			break;
-		default: SI_PANIC();
-	}
-}
-
-scPunctuator sc_actionAddValues(scLexer* lex, scAction* action) {
-	scTokenStruct token;
-	b32 res;
-retry:
-	res = silex_lexerTokenGet(lex);
-	SI_ASSERT(res);
-	token = (scTokenStruct){lex->type, lex->token};
-
-	switch (lex->type) {
-		case SILEX_TOKEN_PUNCTUATOR: {
-			SI_ASSERT(lex->token.punctuator == ';' || lex->token.punctuator == ',');
-			return lex->token.punctuator;
-		}
-		default:
-			si_arrayPush(&action->values, token);
-			goto retry;
-	}
-
-}
-
-#define sc_actionEvaluate(action, node) \
-	sc_actionEvaluateEx(action, node, 0)
-
-void sc_actionEvaluateEx(scAction* action, scAstNode* node, usize i) {
-	scInitializer* prevInit = nil;
-	scTokenStruct* token1, *token2, *token3;
-
-	for ( ; i < si_arrayLen(action->values); i += 1) {
-		token1 = &action->values[i];
-		token2 = si_arrayAt(action->values, i + 1);
-
-		scInitializer* init = si_mallocItem(alloc[SC_AST], scInitializer);
-		if (prevInit != nil) {
-			prevInit->next = init;
-		}
-		else {
-			node->init = init;
-		}
-		prevInit = init;
-		init->next = nil;
-
-		switch (token1->type) {
-			case SILEX_TOKEN_CONSTANT: {
-				if (token2 != nil) {
-					SI_ASSERT(token2->type == SILEX_TOKEN_OPERATOR);
-					token3 = si_arrayAt(action->values, i + 2);
-					SI_ASSERT_MSG(token3 != nil, "Expected an expression after the operator.");
-
-					init->type = SC_INIT_BINARY;
-					init->value.binary.left = token1;
-					init->value.binary.operator = token2->token.operator;
-					init->value.binary.right = token3;
-					i += 2;
-					break;
-				}
-
-				init->type = SC_INIT_CONSTANT;
-				init->value.constant = token1->token.constant;
-				break;
-			}
-
-			case SILEX_TOKEN_OPERATOR: {
-				SI_ASSERT(token2 != nil);
-				init->type = SC_INIT_BINARY;
-				init->value.binary.left = nil;
-				init->value.binary.operator = token1->token.operator;
-				init->value.binary.right = token2;
-
-				i += 1;
-				break;
-			}
-			case SILEX_TOKEN_IDENTIFIER: {
-				if (token2 != nil) {
-					SI_ASSERT(token2->type == SILEX_TOKEN_OPERATOR);
-					token3 = si_arrayAt(action->values, i + 2);
-					SI_ASSERT_MSG(token3 != nil, "Expected an expression after the operator.");
-
-					init->type = SC_INIT_BINARY;
-					init->value.binary.left = token1;
-					init->value.binary.operator = token2->token.operator;
-					init->value.binary.right = token3;
-					i += 2;
-					break;
-				}
-
-				init->type = SC_INIT_IDENTIFIER;
-				init->value.identifier = token1->token.identifier;
-				break;
-			}
-
-
-			default: SI_PANIC();
-		}
-	}
-}
-
-#ifndef SILEX_HASH_FUNC_INIT
-	#define SILEX_HASH_FUNC_INIT(hash) SILEX_HASH_TYPE hash = 14695981039346656037UL
-#endif
-
-#ifndef SILEX_HASH_FUNC
-	#define SILEX_HASH_FUNC(hash, character) \
-		do { \
-			(hash) ^= (u64)(character); \
-			(hash) *= 1099511628211UL; \
-		} while (0)
-	#endif
-
-#ifndef SILEX_HASH_FUNC_END
-	#define SILEX_HASH_FUNC_END(hash)
-#endif
-
-
-scVariable* sc_getVarAndOptimizeToken(scFunction* function, scTokenStruct* token) {
-	scVariable* var = nil;
-
-	if (token->type == SILEX_TOKEN_IDENTIFIER) {
-		var = si_hashtableGetWithHash(function->scope, token->token.identifier.hash);
-		if (var->init && var->init->type == SC_INIT_CONSTANT) {
-			token->type = SILEX_TOKEN_CONSTANT;
-			 token->token.constant = var->init->value.constant;
-		}
-	}
-
-	return var;
-}
 
 int main(void) {
 #if 0
@@ -395,7 +52,6 @@ int main(void) {
 	}
 #endif
 #if 1
-
 	cstring text;
 	usize textLen;
 	{
@@ -409,50 +65,65 @@ int main(void) {
 #endif
 
 #if 1
-	alloc[SC_MAIN] = si_allocatorMake(
+	SC_ALLOCATOR_MAKE(
+		SC_MAIN,
+		SI_MEGA(2),
 		(3 * sizeof(siArrayHeader) + sizeof(siHashEntry) * SC_MAX_VARS) * SC_MAX_FUNCS +
-		sizeof(scFunction) * SC_MAX_FUNCS +
-		(sizeof(scVariable) * SC_MAX_VARS) * SC_MAX_FUNCS +
+		(sizeof(scFunction)) * SC_MAX_FUNCS +
+		((sizeof(scVariable)) * SC_MAX_VARS) * SC_MAX_FUNCS +
 		(sizeof(scAction) * SC_MAX_ACTIONS) * SC_MAX_FUNCS +
 		(sizeof(scTokenStruct) * SC_MAX_INITIALIZERS) * SC_MAX_ACTIONS
 	);
-	usize bytes = alloc[SC_MAIN]->maxLen;
-	si_printf("%f MB\n", bytes / 1024.f / 1024.f);
-	SI_ASSERT(bytes < SI_MEGA(2));
+	SC_ALLOCATOR_MAKE(
+		SC_SCOPE,
+		SI_KILO(1),
+		SI_KILO(1)
+	);
 
-	scFunction scope_GLOBAL;
-	scope_GLOBAL.scope = si_hashtableMakeReserve(alloc[SC_MAIN], SC_MAX_VARS);
+	scInfoTable global_scope;
+	/* NOTE(EimaMei): Pagal struktūros 'scInfoTable' komentarą 'include/scc.h' faile. */
+	global_scope.vars = si_malloc(
+		alloc[SC_MAIN],
+		sizeof(scIdentifierKeyType) * (SC_MAX_VARS + SC_MAX_FUNCS) +
+		sizeof(scVariable) * SC_MAX_VARS + sizeof(scFunction) * SC_MAX_FUNCS
+	);
+	global_scope.types = nil;
+	global_scope.stack = 0;
+	global_scope.parent = nil;
+	global_scope.identifiers = si_hashtableMakeReserve(alloc[SC_MAIN], SC_MAX_VARS + SC_MAX_FUNCS);
 
-	scFunction* curFunc = &scope_GLOBAL;
-	siHashTable functions = si_hashtableMakeReserve(alloc[SC_MAIN], 1024);
+
+	scInfoTable* scope = &global_scope;
 #endif
 
-#if 1 /* TESTING THE PERFORMANCE OF si_hashtableGet */
+#if 0 /* TESTING THE PERFORMANCE OF si_hashtableGet */
 	u64 hash = 0x8ED4B07B589FB77;
-	for_range (i, 0, 512) {
+	for_range (i, 0, 1023) {
 		u64 n = rand();
 		while (n == hash) {
 			n = rand();
 		}
 		si_hashtableSetWithHash(functions, n, nil);
 	}
+	si_hashtableSetWithHash(functions, hash, &hash);
 
-	si_hashtableSetWithHash(functions, hash, functions);
 	siTimeStamp ts2 = si_timeStampStart();
 
-	rawptr n;
+	u64* n;
 	for_range (i, 1, 1000000) {
-		n = si_hashtableGetWithHash(functions, 0x8ED4B07B589FB77 - 1);
+		n = si_hashtableGetWithHash(functions, 0x8ED4B07B589FB77);
 	}
 	si_timeStampPrintSince(ts2);
 
-	si_printf("%p %ll#X\n", n, hash);
+	si_printf("%ll#X: %p %ll#X\n", (n) ? *n : 0, n, hash);
 	SI_PANIC();
-#endif 
+#endif
 
 #if 1
 	siTimeStamp ts = si_timeStampStart();
 	scLexer lex = silex_lexerMake(text, textLen);
+	b32 isInFunc = false;
+
 	while (silex_lexerTokenGet(&lex)) {
 		switch (lex.type) {
 			case SILEX_TOKEN_KEYWORD: {
@@ -471,7 +142,7 @@ start:
 						case '(': {
 							SI_ASSERT(isCreatingVar == false);
 
-							scFunction* func = si_mallocItem(alloc[SC_MAIN], scFunction);
+							scFunction* func = sc_globalScopeFuncPtr(scope, si_arrayLen(scope->identifiers), SC_MAX_VARS);
 							func->type = type;
 							func->name = name;
 							func->scope = si_hashtableMakeReserve(alloc[SC_MAIN], SC_MAX_VARS);
@@ -510,6 +181,16 @@ start:
 
 							si_hashtableSetWithHash(functions, name.hash, func);
 							curFunc = func;
+
+							b32 res = silex_lexerTokenGet(&lex);
+							SI_ASSERT(res && lex.type == SILEX_TOKEN_PUNCTUATOR);
+
+							switch (lex.token.punctuator) {
+								case '{': isInFunc = true; curFunc = func; break;
+								case ';': break;
+								default: SI_PANIC_MSG("Cannot use this punctuator after a function declaration");
+							}
+
 
 							break;
 						}
@@ -555,6 +236,20 @@ start:
 
 						sc_actionAddValues(&lex, &action);
 						si_arrayPush(&curFunc->code, action);
+						break;
+					}
+					default: SI_PANIC();
+				}
+				break;
+			}
+
+			case SILEX_TOKEN_PUNCTUATOR: {
+				switch (lex.token.punctuator) {
+					case '}': {
+						if (isInFunc) {
+							isInFunc = false;
+							curFunc = &scope_GLOBAL;
+						}
 						break;
 					}
 					default: SI_PANIC();
@@ -821,7 +516,7 @@ start:
 
 	si_timeStampPrintSince(ts);
 
-	alloc[SC_X86ASM] = si_allocatorMake(sizeof(u8) * 16 * si_arrayLen(instructions));
+	alloc[SC_X86ASM] = si_allocatorMake(2 * sizeof(u8) * 16 * si_arrayLen(instructions));
 	bytes = alloc[SC_X86ASM]->maxLen;
 	si_printf("%f MB\n", bytes / 1024.f / 1024.f);
 	SI_ASSERT(bytes < SI_MEGA(1));
@@ -829,12 +524,17 @@ start:
 
 	usize x86Len = 0;
 	u8* x86 = si_mallocArray(alloc[SC_X86ASM], u8, 16 * si_arrayLen(instructions));
+
+	ts = si_timeStampStart();
+
+
 	x86EnvironmentState x86state;
 	x86state.conv = X86_CALLING_CONV_SYSTEM_V_X86;
 	x86state.registers = 0;
 	usize offset = sizeof(elf64ElfHeader) + sizeof(elf64ProgramHeader);
 
 	ts = si_timeStampStart();
+	si_timeStampPrintSince(ts);
 
 	for_range (i, 0, si_arrayLen(instructions)) {
 		scAsm* instruction = &instructions[i];

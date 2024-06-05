@@ -4988,18 +4988,20 @@ siHashTable si_hashtableMake(siAllocator* alloc, const rawptr* keyArray, usize k
 SIDEF
 siHashTable si_hashtableMakeReserve(siAllocator* alloc, usize capacity) {
 	SI_ASSERT(capacity != 0);
+	/* NOTE(EimaMei): A power of 2 length is enforced so that truncating a hash
+	 * into a valid index would only require a 'hash & (capacity - 1)', which
+	 * basically takes no time in comparison to the usual modulo operator. */
 	SI_ASSERT((capacity & (capacity - 1)) == 0);
 
 	siHashTable table = si_arrayMakeReserve(alloc, sizeof(siHashEntry), capacity);
-
 	siHashEntry entry;
 	entry.key = 0;
 	entry.value = nil;
 	for_range (i, 0, capacity - 1) {
-		entry.next = &table[i] + 1;
+		entry.next = 0;
 		table[i] = entry;
 	}
-	entry.next = &table[0];
+	entry.next = 0;
 	table[capacity] = entry;
 
 	return table;
@@ -5022,17 +5024,16 @@ rawptr si_hashtableGetWithHash(const siHashTable ht, u64 hash) {
 	usize index = hash & (header->capacity - 1);
 
 	siHashEntry* entry = &ht[index];
-	usize limit = 0;
+	goto skip; /* NOTE(EimaMei):	We skip the 'entry->next' line so that the
+									first entry can get checked. */
 
-	do {
-		limit += 1;
-
+	while (entry->next != 0) {
+		entry = entry->next;
+skip:
 		if (hash == entry->key) {
 			return entry->value;
 		}
-
-		entry = entry->next;
-	} while (entry && limit != header->len);
+	}
 
 	return nil;
 }
@@ -5062,7 +5063,7 @@ siHashEntry* si_hashtableSetWithHash(const siHashTable ht, u64 hash, const rawpt
 			return entry;
 		}
 
-		entry = entry->next;
+		entry = entry->next ? entry->next : (entry + 1);
 	}
 	SI_ASSERT(entry->key == 0);
 
@@ -5070,9 +5071,7 @@ siHashEntry* si_hashtableSetWithHash(const siHashTable ht, u64 hash, const rawpt
 	entry->value = valuePtr;
 
 	if (entry != original) {
-		while (original->next != original + 1) {
-			original = original->next;
-		}
+		while (original->next != 0) { original = original->next; }
 		original->next = entry;
 	}
 

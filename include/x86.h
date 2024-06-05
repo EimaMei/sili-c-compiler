@@ -58,6 +58,7 @@ typedef struct {
 #define X86_RET 0xC3
 #define X86_MOV_RM32_I32 0xC7
 
+#define X86_SYSCALL 0x0F05
 #define X86_SYSCALL_H 0x0F
 #define X86_SYSCALL_L 0x05
 

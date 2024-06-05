@@ -5,7 +5,7 @@ OS = LINUX
 
 SRC-DIR = src
 DEPS-DIR = $(SRC-DIR)/deps
-INCLUDE = -I"include" -I"." -I"deps"
+INCLUDE = -I"include" -I"." -I"deps" -I"src"
 FLAGS = -std=c99 -Wall -Wextra -Wpedantic
 MAC_GEN_APP = false
 
