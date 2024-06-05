@@ -29,6 +29,209 @@ siAllocator* alloc[SC_ALLOC_LEN];
 #define SC_MAX_ACTIONS 128
 #define SC_MAX_INITIALIZERS 32
 
+
+void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions) {
+	siArray(scAstNode) ast = si_arrayMakeReserve(alloc[SC_AST], sizeof(scAstNode), si_arrayLen(func->code));
+
+	for_range (i, 0, si_arrayLen(func->code)) {
+		scAction* action = &func->code[i];
+		scAstNode node;
+
+		switch (action->type) {
+			case SC_ACTION_VAR_ASSIGN: {
+				scVariable* var = *si_cast(scVariable**, &action->values[0]);
+				node.type = SC_AST_VAR_MAKE;
+				node.extra.var = var;
+
+				sc_actionEvaluateEx(action, &node, 1);
+				var->init = node.init;
+				break;
+			}
+
+			case SC_ACTION_RETURN: {
+				node.type = SC_AST_RETURN;
+				sc_actionEvaluate(action, &node);
+				break;
+			}
+			default: SI_PANIC();
+		}
+
+		si_arrayPush(&ast, node);
+	}
+
+
+	for_range (i, 0, si_arrayLen(ast)) {
+		scAstNode* node = &ast[i];
+		scInitializer* prevInit = nil;
+
+		scInitializer* inits = node->init;
+		scInitializer* init = inits;
+
+		while (init != nil) {
+			switch (init->type) {
+				case SC_INIT_BINARY: {
+					scTokenStruct* left = init->value.binary.left,
+								  *right = init->value.binary.right;
+
+					if (left == nil) {
+						switch (prevInit->type) {
+							case SC_INIT_CONSTANT: {
+								sc_initializerConstantCalc(
+									prevInit, init->value.binary.operator, right
+								);
+								prevInit->next = init->next;
+
+								break;
+							}
+							default: SI_PANIC();
+						}
+					}
+
+					scVariable* leftVar = sc_getVarAndOptimizeToken(scope, left);
+					scVariable* rightVar = sc_getVarAndOptimizeToken(scope, right);
+
+					if (left->type == SILEX_TOKEN_CONSTANT && left->type == right->type) {
+						scOperator op = init->value.binary.operator;
+						init->value.constant = left->token.constant;
+
+						sc_initializerConstantCalc(init, op, right);
+						prevInit = init;
+					}
+					else { SI_PANIC(); }
+
+					break;
+				}
+				case SC_INIT_IDENTIFIER: {
+					scString identifier = init->value.identifier;
+					scVariable* var = si_hashtableGetWithHash(scope->identifiers, identifier.hash);
+
+					if (var->init && var->init->type == SC_INIT_CONSTANT) {
+						init->type = SC_INIT_CONSTANT;
+						init->value = var->init->value;
+					}
+
+					break;
+				}
+				case SC_INIT_CONSTANT: break;
+				default: SI_PANIC();
+			}
+
+			init = init->next;
+		}
+	}
+
+
+	scAsm asm = {0};
+	asm.type = SC_ASM_PUSH_R64;
+	si_arrayPush(&instructions, asm);
+
+	usize stack = 0;
+	for_range (i, 0, si_arrayLen(func->parameters)) {
+		usize j = func->parameters[i];
+		scVariable* var = (scVariable*)si_cast(scIdentifierKey, scope->identifiers[j].value)->identifier;
+		asm.type = 0;
+
+		switch (var->type.size) {
+			case 8: {
+				stack = si_alignCeilEx(stack + 8, 8);
+				asm.type = SC_ASM_LD_M64_FUNC_PARAM;
+				break;
+			}
+			case 4: {
+				stack = si_alignCeilEx(stack + 4, 4);
+				asm.type = SC_ASM_LD_M32_FUNC_PARAM;
+				break;
+			}
+
+			default: SI_PANIC();
+		}
+
+		var->location = stack;
+		asm.dst = stack;
+		si_arrayPush(&instructions, asm);
+	}
+
+	for_range (i, 0, si_arrayLen(ast)) {
+		scAstNode* node = &ast[i];
+
+		switch (node->type) {
+			case SC_AST_VAR_MAKE: {
+				scVariable* var = node->extra.var;
+				scInitializer* inits = node->init;
+
+				scInitializer* init = inits;
+				while (init != nil) {
+					switch (init->type) {
+						case SC_INIT_CONSTANT: {
+							scConstant constant = init->value.constant;
+							switch (var->type.size) {
+								case 4: {
+									asm.type = SC_ASM_LD_M32_I32;
+									asm.dst = var->location;
+									asm.src = constant.value.integer;
+
+									break;
+								}
+								default: SI_PANIC();
+							}
+							break;
+						}
+						default: SI_PANIC();
+					}
+					init = init->next;
+				}
+
+				break;
+			}
+			case SC_AST_RETURN: {
+				scInitializer* inits = node->init;
+
+				scInitializer* init = inits;
+				while (init != nil) {
+					switch (init->type) {
+						case SC_INIT_CONSTANT: {
+							scConstant constant = init->value.constant;
+							switch (func->type.size) {
+								case 4: {
+									asm.type = SC_ASM_RET_I32;
+									asm.src = constant.value.integer;
+
+									break;
+								}
+								default: SI_PANIC();
+							}
+							break;
+						}
+						case SC_INIT_IDENTIFIER: {
+							u64 hash = init->value.identifier.hash;
+							scIdentifierKey key = si_hashtableGetWithHash(scope->identifiers, hash);
+
+							switch (func->type.size) {
+								case 4: {
+									asm.type = SC_ASM_RET_M32;
+									asm.src = key->identifier->var.location;
+
+									break;
+								}
+								default: SI_PANIC();
+							}
+							break;
+						}
+						default: SI_PANIC();
+					}
+					init = init->next;
+				}
+
+				break;
+			}
+
+			default: SI_PANIC();
+		}
+
+		si_arrayPush(&instructions, asm);
+	}
+}
+
 int main(void) {
 #if 0
 	cstring keywords[] = {
@@ -76,31 +279,48 @@ int main(void) {
 		sizeof(scTokenStruct) * SC_MAX_INITIALIZERS * SC_MAX_ACTIONS
 	);
 	SC_ALLOCATOR_MAKE(
+		SC_AST,
+		SI_MEGA(1),
+		(sizeof(scAstNode) + sizeof(siArrayHeader) + sizeof(scInitializer) * SC_MAX_INITIALIZERS) * SC_MAX_ACTIONS
+	);
+
+	SC_ALLOCATOR_MAKE(
+		SC_ASM,
+		SI_MEGA(3),
+		SI_MEGA(3)
+	);
+
+	SC_ALLOCATOR_MAKE(
 		SC_SCOPE,
 		SI_KILO(1),
 		SI_KILO(1)
 	);
+	siArray(scAsm) asm = si_arrayMakeReserve(alloc[SC_ASM], sizeof(scAsm), (SI_MEGA(3) / sizeof(scAsm)) - 2 * sizeof(scAsm));
 
 	scGlobalInfoTable global_scope;
+	global_scope.parent = nil;
+	global_scope.identifiers = si_hashtableMakeReserve(
+		alloc[SC_MAIN], SC_MAX_VARS + SC_MAX_FUNCS
+	);
+
+	global_scope.stack = 0;
+	global_scope.scopeRank = 0;
+
 	global_scope.varsLen = 0;
 	global_scope.vars = si_malloc(
 		alloc[SC_MAIN],
 		sizeof(scIdentifierKeyType) * SC_MAX_VARS +
 		sizeof(scVariable) * SC_MAX_VARS
 	);
+	global_scope.typesLen = 0;
+	global_scope.types = nil;
+
 	global_scope.funcsLen = 0;
 	global_scope.funcs = si_malloc(
 		alloc[SC_MAIN],
 		sizeof(scIdentifierKeyType) * SC_MAX_FUNCS +
 		sizeof(scFunction) * SC_MAX_FUNCS
 	);
-
-	global_scope.typesLen = 0;
-	global_scope.types = nil;
-	global_scope.stack = 0;
-	global_scope.parent = nil;
-	global_scope.identifiers = si_hashtableMakeReserve(alloc[SC_MAIN], SC_MAX_VARS + SC_MAX_FUNCS);
-
 
 	scInfoTable* scope = (scInfoTable*)&global_scope;
 	scFunction* curFunc = nil;
@@ -154,6 +374,8 @@ start:
 							scInfoTable* funcScope = si_mallocItem(alloc[SC_SCOPE], scInfoTable);
 							*funcScope = *scope;
 							funcScope->parent = scope;
+							funcScope->rank += 1;
+
 							scFunction* func = &global_scope.funcs[global_scope.funcsLen];
 							func->type = type;
 							func->name = name;
@@ -204,8 +426,6 @@ start:
 							switch (lex.token.punctuator) {
 								case '{': {
 									curFunc = func;
-
-									scope->allocStart = 0;
 									scope = funcScope;
 									break;
 								}
@@ -227,7 +447,6 @@ start:
 							si_arrayPush(&action.values, pVar);
 
 							scPunctuator punc = sc_actionAddValues(&lex, &action);
-							si_printf("%c %ll#X\n", punc, name);
 							if (curFunc != nil) {
 								si_arrayPush(&curFunc->code, action);
 								si_hashtableSetWithHash(scope->identifiers, name, pVar);
@@ -274,6 +493,8 @@ start:
 			case SILEX_TOKEN_PUNCTUATOR: {
 				switch (lex.token.punctuator) {
 					case '}': {
+						sc_parseFunction(scope, curFunc, asm);
+
 						scope = scope->parent;
 
 						if (scope->parent == nil) {
@@ -288,14 +509,6 @@ start:
 	}
 	si_timeStampPrintSince(ts);
 #endif
-
-#if 0
-	SC_ALLOCATOR_MAKE(
-		SC_MAIN,
-		SI_MEGA(1),
-		(sizeof(scAstNode) + sizeof(siArrayHeader) + sizeof(scInitializer) * SC_MAX_INITIALIZERS) * si_arrayLen(curFunc->code)
-	);
-	siArray(scAstNode) ast = si_arrayMakeReserve(alloc[SC_AST], sizeof(scAstNode), si_arrayLen(curFunc->code));
 
 #if 0
 	ts = si_timeStampStart();
@@ -326,224 +539,11 @@ start:
 	}
 #endif
 
-	for_range (i, 0, si_arrayLen(curFunc->code)) {
-		scAction* action = &curFunc->code[i];
-		scAstNode node;
 
-		switch (action->type) {
-			case SC_ACTION_VAR_ASSIGN: {
-				scVariable* var = *si_cast(scVariable**, &action->values[0]);
-				node.type = SC_AST_VAR_MAKE;
-				node.extra.var = var;
 
-				sc_actionEvaluateEx(action, &node, 1);
-				var->init = node.init;
-				break;
-			}
-
-			case SC_ACTION_RETURN: {
-				node.type = SC_AST_RETURN;
-				sc_actionEvaluate(action, &node);
-				break;
-			}
-			default: SI_PANIC();
-		}
-
-		si_arrayPush(&ast, node);
-	}
-	si_timeStampPrintSince(ts);
-#endif
-
-#if 0
- 	ts = si_timeStampStart();
-
-	for_range (i, 0, si_arrayLen(ast)) {
-		scAstNode* node = &ast[i];
-		scInitializer* prevInit = nil;
-
-		scInitializer* inits = node->init;
-		scInitializer* init = inits;
-
-		while (init != nil) {
-			switch (init->type) {
-				case SC_INIT_BINARY: {
-					scTokenStruct* left = init->value.binary.left,
-								  *right = init->value.binary.right;
-
-					if (left == nil) {
-						switch (prevInit->type) {
-							case SC_INIT_CONSTANT: {
-								sc_initializerConstantCalc(
-									prevInit, init->value.binary.operator, right
-								);
-								prevInit->next = init->next;
-
-								break;
-							}
-							default: SI_PANIC();
-						}
-					}
-
-					scVariable* leftVar = sc_getVarAndOptimizeToken(curFunc, left);
-					scVariable* rightVar = sc_getVarAndOptimizeToken(curFunc, right);
-
-					if (left->type == SILEX_TOKEN_CONSTANT && left->type == right->type) {
-						scOperator op = init->value.binary.operator;
-						init->value.constant = left->token.constant;
-
-						sc_initializerConstantCalc(init, op, right);
-						prevInit = init;
-					}
-					else { SI_PANIC(); }
-
-					break;
-				}
-				case SC_INIT_IDENTIFIER: {
-					scString identifier = init->value.identifier;
-					scVariable* var = si_hashtableGetWithHash(curFunc->scope, identifier.hash);
-
-					if (var->init && var->init->type == SC_INIT_CONSTANT) {
-						init->type = SC_INIT_CONSTANT;
-						init->value = var->init->value;
-					}
-
-					break;
-				}
-				case SC_INIT_CONSTANT: break;
-				default: SI_PANIC();
-			}
-
-			init = init->next;
-		}
-	}
-	si_timeStampPrintSince(ts);
-#endif
 
 
 #if 0
-	alloc[SC_ASM] = si_allocatorMake(
-		sizeof(siArrayHeader) + si_arrayLen(ast) * sizeof(scAsm) +
-		3 * sizeof(scAsm) * si_arrayLen(functions) +
-		si_arrayLen(curFunc->parameters) * sizeof(scAsm)
-	);
-	bytes = alloc[SC_ASM]->maxLen;
-	si_printf("%f MB\n", bytes / 1024.f / 1024.f);
-	SI_ASSERT(bytes < SI_MEGA(1));
-
-	siArray(scAsm) instructions = si_arrayMakeReserve(alloc[SC_AST], sizeof(scAsm), si_arrayLen(ast) + 3 * si_arrayLen(functions));
-
-	scAsm asm = {0};
-	asm.type = SC_ASM_PUSH_R64;
-	si_arrayPush(&instructions, asm);
-
-	for_range (i, 0, si_arrayLen(curFunc->parameters)) {
-		usize j = curFunc->parameters[i];
-		scVariable* var = (scVariable*)curFunc->scope[j].value;
-		asm.type = 0;
-
-		switch (var->type.size) {
-			case 8: {
-				curFunc->stack = si_alignCeilEx(curFunc->stack + 8, 8);
-				asm.type = SC_ASM_LD_M64_FUNC_PARAM;
-				break;
-			}
-			case 4: {
-				curFunc->stack = si_alignCeilEx(curFunc->stack + 4, 4);
-				asm.type = SC_ASM_LD_M32_FUNC_PARAM;
-				break;
-			}
-
-			default: SI_PANIC();
-		}
-
-		var->stack = curFunc->stack;
-		asm.dst = curFunc->stack;
-		si_arrayPush(&instructions, asm);
-	}
-
-	ts = si_timeStampStart();
-	for_range (i, 0, si_arrayLen(ast)) {
-		scAstNode* node = &ast[i];
-
-		switch (node->type) {
-			case SC_AST_VAR_MAKE: {
-				scVariable* var = node->extra.var;
-				scInitializer* inits = node->init;
-
-				scInitializer* init = inits;
-				while (init != nil) {
-					switch (init->type) {
-						case SC_INIT_CONSTANT: {
-							scConstant constant = init->value.constant;
-							switch (var->type.size) {
-								case 4: {
-									curFunc->stack = si_alignCeilEx(curFunc->stack + 4, 4);
-									var->stack = curFunc->stack;
-
-									asm.type = SC_ASM_LD_M32_I32;
-									asm.dst = curFunc->stack;
-									asm.src = constant.value.integer;
-
-									break;
-								}
-								default: SI_PANIC();
-							}
-							break;
-						}
-						default: SI_PANIC();
-					}
-					init = init->next;
-				}
-
-				break;
-			}
-			case SC_AST_RETURN: {
-				scInitializer* inits = node->init;
-
-				scInitializer* init = inits;
-				while (init != nil) {
-					switch (init->type) {
-						case SC_INIT_CONSTANT: {
-							scConstant constant = init->value.constant;
-							switch (curFunc->type.size) {
-								case 4: {
-									asm.type = SC_ASM_RET_I32;
-									asm.src = constant.value.integer;
-
-									break;
-								}
-								default: SI_PANIC();
-							}
-							break;
-						}
-						case SC_INIT_IDENTIFIER: {
-							scVariable* var = si_hashtableGetWithHash(curFunc->scope, init->value.identifier.hash);
-							switch (curFunc->type.size) {
-								case 4: {
-									asm.type = SC_ASM_RET_M32;
-									asm.src = var->stack;
-
-									break;
-								}
-								default: SI_PANIC();
-							}
-							break;
-						}
-						default: SI_PANIC();
-					}
-					init = init->next;
-				}
-
-				break;
-			}
-
-			default: SI_PANIC();
-		}
-
-		si_arrayPush(&instructions, asm);
-	}
-
-	si_timeStampPrintSince(ts);
 
 	alloc[SC_X86ASM] = si_allocatorMake(2 * sizeof(u8) * 16 * si_arrayLen(instructions));
 	bytes = alloc[SC_X86ASM]->maxLen;

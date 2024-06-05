@@ -26,11 +26,6 @@ typedef struct scInitializer {
 	struct scInitializer* next;
 } scInitializer;
 
-typedef SI_ENUM(u32, scAstNodeType) {
-	SC_AST_VAR_MAKE = 1,
-	SC_AST_RETURN
-};
-
 typedef SI_ENUM(u32, scActionType) {
 	SC_ACTION_VAR_ASSIGN = 1,
 	SC_ACTION_VAR_CREATE,
@@ -63,9 +58,8 @@ SI_STATIC_ASSERT(sizeof(scType) == 24);
 typedef struct {
 	scType type;
 	scInitializer* init;
-	u32 stack;
+	u32 location;
 } scVariable;
-SI_STATIC_ASSERT(sizeof(scVariable) == 40);
 
 
 typedef struct {
@@ -75,6 +69,12 @@ typedef struct {
 	siArray(scAction) code;
 } scFunction;
 
+
+typedef SI_ENUM(u32, scAstNodeType) {
+	SC_AST_VAR_MAKE = 1,
+	SC_AST_RETURN
+};
+
 typedef struct {
 	scAstNodeType type;
 	scInitializer* init;
@@ -82,9 +82,10 @@ typedef struct {
 		scVariable* var;
 	} extra;
 } scAstNode;
+SI_STATIC_ASSERT(sizeof(scAstNode) == 24);
 
 
-typedef SI_ENUM(u32, scIdentifierKeyType) {
+typedef SI_ENUM(u16, scIdentifierKeyType) {
 	SC_IDENTIFIER_KEY_FUNC = 1,
 	SC_IDENTIFIER_KEY_VAR,
 	SC_IDENTIFIER_KEY_TYPE
@@ -92,16 +93,20 @@ typedef SI_ENUM(u32, scIdentifierKeyType) {
 
 typedef struct {
 	scIdentifierKeyType type;
-	char identifier[];
+	u16 rank;
+	union {
+		scVariable var;
+	} identifier[];
 }* scIdentifierKey;
 
-/* NOTE(EimaMei): Ši struktūra galioja tik globajai galiojimo sričiai, įprastiniams yra naudojama 'scInfoTable', kadangi juose neleidžiama deklaruoti funkcijas. */
+/* NOTE(EimaMei): Ši struktūra galioja tik globajai galiojimo sričiai, įprastiniams
+ * yra naudojama 'scInfoTable', kadangi juose neleidžiama deklaruoti funkcijas. */
 typedef struct scGlobalInfoTable {
 	struct scInfoTable* parent;
 	siHt(scIdentifierKey) identifiers;
 
-	u32 allocStart;
 	u32 stack;
+	u32 scopeRank;
 
 	usize varsLen;
 	scVariable* vars;
@@ -118,8 +123,8 @@ typedef struct scInfoTable {
 	struct scInfoTable* parent;
 	siHt(scIdentifierKey) identifiers;
 
-	u32 allocStart;
 	u32 stack;
+	u32 rank;
 
 	usize varsLen;
 	scVariable* vars;
@@ -128,7 +133,7 @@ typedef struct scInfoTable {
 	scVariable* types;
 } scInfoTable;
 SI_STATIC_ASSERT(sizeof(scInfoTable) == 56);
-SI_STATIC_ASSERT(sizeof(scGlobalInfoTable) == 56 + sizeof(usize) * 2);
+SI_STATIC_ASSERT(sizeof(scGlobalInfoTable) == sizeof(scInfoTable) + sizeof(usize) * 2);
 
 typedef SI_ENUM(u32, scAsmType) {
 	SC_ASM_PUSH_R64 = 1,
@@ -150,11 +155,12 @@ typedef SI_ENUM(u32, scAsmType) {
 };
 
 typedef struct {
-	scAsmType type;
-	u64 dst;
-	u64 src;
+	scAsmType type : 24;
+	u8 typeInfo : 8;
+	u32 dst;
+	u32 src;
 } scAsm;
-
+SI_STATIC_ASSERT(sizeof(scAsm) == 12);
 
 typedef SI_ENUM(u32, scIndex) {
 	SC_FILE,
