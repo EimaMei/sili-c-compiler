@@ -341,7 +341,8 @@ b32 silex_lexerTokenGet(scLexer* lexer) {
 
 	if (SI_TO_U16(pLetter) == SI_TO_U16("/*")) {
 		pLetter += 2;
-		while (pLetter[0] != '*' && pLetter[1] != '/') {
+		u16 end = SI_TO_U16("*/");
+		while (SI_TO_U16(pLetter) != end) {
 			pLetter += 1;
 		}
 		pLetter += 2;

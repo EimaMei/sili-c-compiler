@@ -21,6 +21,7 @@ scType type_unsigned = (scType){4, SC_TYPE_INT | SC_TYPE_UNSIGNED, 0, nil};
 scType type_float = (scType){4, SC_TYPE_FLOAT, 0, nil};
 scType type_double = (scType){8, SC_TYPE_FLOAT, 0, nil};
 
+siAllocator* alloc[SC_ALLOC_LEN];
 
 #define SC_MAX_FUNCS 128
 
@@ -68,11 +69,11 @@ int main(void) {
 	SC_ALLOCATOR_MAKE(
 		SC_MAIN,
 		SI_MEGA(2),
-		(3 * sizeof(siArrayHeader) + sizeof(siHashEntry) * SC_MAX_VARS) * SC_MAX_FUNCS +
+		(3 * sizeof(siArrayHeader) + sizeof(siHashEntry) * SC_MAX_VARS) +
 		(sizeof(scFunction)) * SC_MAX_FUNCS +
-		((sizeof(scVariable)) * SC_MAX_VARS) * SC_MAX_FUNCS +
-		(sizeof(scAction) * SC_MAX_ACTIONS) * SC_MAX_FUNCS +
-		(sizeof(scTokenStruct) * SC_MAX_INITIALIZERS) * SC_MAX_ACTIONS
+		(sizeof(scVariable)) * SC_MAX_VARS +
+		sizeof(scAction) * SC_MAX_ACTIONS +
+		sizeof(scTokenStruct) * SC_MAX_INITIALIZERS * SC_MAX_ACTIONS
 	);
 	SC_ALLOCATOR_MAKE(
 		SC_SCOPE,
@@ -80,20 +81,29 @@ int main(void) {
 		SI_KILO(1)
 	);
 
-	scInfoTable global_scope;
-	/* NOTE(EimaMei): Pagal struktūros 'scInfoTable' komentarą 'include/scc.h' faile. */
+	scGlobalInfoTable global_scope;
+	global_scope.varsLen = 0;
 	global_scope.vars = si_malloc(
 		alloc[SC_MAIN],
-		sizeof(scIdentifierKeyType) * (SC_MAX_VARS + SC_MAX_FUNCS) +
-		sizeof(scVariable) * SC_MAX_VARS + sizeof(scFunction) * SC_MAX_FUNCS
+		sizeof(scIdentifierKeyType) * SC_MAX_VARS +
+		sizeof(scVariable) * SC_MAX_VARS
 	);
+	global_scope.funcsLen = 0;
+	global_scope.funcs = si_malloc(
+		alloc[SC_MAIN],
+		sizeof(scIdentifierKeyType) * SC_MAX_FUNCS +
+		sizeof(scFunction) * SC_MAX_FUNCS
+	);
+
+	global_scope.typesLen = 0;
 	global_scope.types = nil;
 	global_scope.stack = 0;
 	global_scope.parent = nil;
 	global_scope.identifiers = si_hashtableMakeReserve(alloc[SC_MAIN], SC_MAX_VARS + SC_MAX_FUNCS);
 
 
-	scInfoTable* scope = &global_scope;
+	scInfoTable* scope = (scInfoTable*)&global_scope;
+	scFunction* curFunc = nil;
 #endif
 
 #if 0 /* TESTING THE PERFORMANCE OF si_hashtableGet */
@@ -122,7 +132,6 @@ int main(void) {
 #if 1
 	siTimeStamp ts = si_timeStampStart();
 	scLexer lex = silex_lexerMake(text, textLen);
-	b32 isInFunc = false;
 
 	while (silex_lexerTokenGet(&lex)) {
 		switch (lex.type) {
@@ -133,7 +142,7 @@ int main(void) {
 					b32 isCreatingVar = false;
 start:
 					SI_ASSERT(lex.type == SILEX_TOKEN_IDENTIFIER);
-					scString name = lex.token.identifier;
+					u64 name = lex.token.identifier.hash;
 
 					b32 res = silex_lexerTokenGet(&lex);
 					SI_ASSERT(res && lex.type == SILEX_TOKEN_PUNCTUATOR);
@@ -142,24 +151,33 @@ start:
 						case '(': {
 							SI_ASSERT(isCreatingVar == false);
 
-							scFunction* func = sc_globalScopeFuncPtr(scope, si_arrayLen(scope->identifiers), SC_MAX_VARS);
+							scInfoTable* funcScope = si_mallocItem(alloc[SC_SCOPE], scInfoTable);
+							*funcScope = *scope;
+							funcScope->parent = scope;
+							scFunction* func = &global_scope.funcs[global_scope.funcsLen];
 							func->type = type;
 							func->name = name;
-							func->scope = si_hashtableMakeReserve(alloc[SC_MAIN], SC_MAX_VARS);
 							func->code = si_arrayMakeReserve(alloc[SC_MAIN], sizeof(scAction), 0);
-							u32 paramaterIndex[128];
+
+							global_scope.funcsLen += 1;
+							si_hashtableSetWithHash(global_scope.identifiers, name, func);
+
+							usize paramsLen = 0;
+							u32 params[128];
 
 							while (res) {
 								res = silex_lexerTokenGet(&lex);
 								scType type = sc_typeGet(&lex);
 								SI_ASSERT(res && lex.type == SILEX_TOKEN_IDENTIFIER);
+								u64 hash = lex.token.identifier.hash;
 
 								scVariable* pVar = si_mallocItem(alloc[SC_MAIN], scVariable);
 								pVar->type = type;
 								pVar->init = 0;
 
-								siHashEntry* scopePtr = si_hashtableSetWithHash(func->scope, lex.token.identifier.hash, pVar);
-								paramaterIndex[si_arrayLen(func->scope) - 1] = scopePtr - func->scope;
+								siHashEntry* param = si_hashtableSetWithHash(funcScope->identifiers, hash, pVar);
+								params[paramsLen] = param - funcScope->identifiers;
+								paramsLen += 1;
 
 								res = silex_lexerTokenGet(&lex);
 								SI_ASSERT(res && lex.type == SILEX_TOKEN_PUNCTUATOR);
@@ -173,20 +191,24 @@ start:
 								}
 							}
 
-							func->parameters = si_arrayMakeReserve(alloc[SC_MAIN], sizeof(u32), si_arrayLen(func->scope));
-							SI_ARRAY_HEADER(func->parameters)->len = si_arrayLen(func->scope);
-							for_range (i, 0, si_arrayLen(func->scope)) {
-								func->parameters[i] = paramaterIndex[i];
+							func->parameters = si_arrayMakeReserve(alloc[SC_MAIN], sizeof(u32), paramsLen);
+							SI_ARRAY_HEADER(func->parameters)->len = paramsLen;
+							for_range (i, 0, paramsLen) {
+								func->parameters[i] = params[i];
 							}
 
-							si_hashtableSetWithHash(functions, name.hash, func);
-							curFunc = func;
 
 							b32 res = silex_lexerTokenGet(&lex);
 							SI_ASSERT(res && lex.type == SILEX_TOKEN_PUNCTUATOR);
 
 							switch (lex.token.punctuator) {
-								case '{': isInFunc = true; curFunc = func; break;
+								case '{': {
+									curFunc = func;
+
+									scope->allocStart = 0;
+									scope = funcScope;
+									break;
+								}
 								case ';': break;
 								default: SI_PANIC_MSG("Cannot use this punctuator after a function declaration");
 							}
@@ -205,8 +227,14 @@ start:
 							si_arrayPush(&action.values, pVar);
 
 							scPunctuator punc = sc_actionAddValues(&lex, &action);
-							si_arrayPush(&curFunc->code, action);
-							si_hashtableSetWithHash(curFunc->scope, name.hash, pVar);
+							si_printf("%c %ll#X\n", punc, name);
+							if (curFunc != nil) {
+								si_arrayPush(&curFunc->code, action);
+								si_hashtableSetWithHash(scope->identifiers, name, pVar);
+							}
+							else {
+								SI_PANIC();
+							}
 
 							if (punc == ',') {
 								if (type.ptr) {
@@ -246,13 +274,13 @@ start:
 			case SILEX_TOKEN_PUNCTUATOR: {
 				switch (lex.token.punctuator) {
 					case '}': {
-						if (isInFunc) {
-							isInFunc = false;
-							curFunc = &scope_GLOBAL;
+						scope = scope->parent;
+
+						if (scope->parent == nil) {
+							curFunc = nil;
 						}
 						break;
 					}
-					default: SI_PANIC();
 				}
 				break;
 			}
@@ -261,14 +289,15 @@ start:
 	si_timeStampPrintSince(ts);
 #endif
 
-#if 1
-	alloc[SC_AST] = si_allocatorMake((sizeof(scAstNode) + sizeof(siArrayHeader) + sizeof(scInitializer) * SC_MAX_INITIALIZERS) * si_arrayLen(curFunc->code));
-	bytes = alloc[SC_AST]->maxLen;
-	si_printf("%f MB\n", bytes / 1024.f / 1024.f);
-	SI_ASSERT(bytes < SI_MEGA(1));
-
+#if 0
+	SC_ALLOCATOR_MAKE(
+		SC_MAIN,
+		SI_MEGA(1),
+		(sizeof(scAstNode) + sizeof(siArrayHeader) + sizeof(scInitializer) * SC_MAX_INITIALIZERS) * si_arrayLen(curFunc->code)
+	);
 	siArray(scAstNode) ast = si_arrayMakeReserve(alloc[SC_AST], sizeof(scAstNode), si_arrayLen(curFunc->code));
 
+#if 0
 	ts = si_timeStampStart();
 	SILEX_HASH_FUNC_INIT(hash_main);
 	{
@@ -276,8 +305,8 @@ start:
 			SILEX_HASH_FUNC(hash_main, "main"[i]);
 		}
 
-		if (curFunc->name.hash != hash_main) {
-			curFunc = si_hashtableGetWithHash(functions, hash_main);
+		if (curFunc->name != hash_main) {
+			curFunc = si_hashtableGetWithHash(global_scope.identifiers, hash_main);
 		}
 		SI_ASSERT_MSG(curFunc != nil, "main needs to exist");
 
@@ -291,10 +320,11 @@ start:
 		mainTypes[0] = type_int;
 		mainTypes[1] = (scType){.size = 8, .ptr = &type_char, .ptrCount = 2, .traits = type_char.traits};
 		for_range (i, 0, si_arrayLen(args)) {
-			scVariable* arg = curFunc->scope[args[i]].value;
+			scVariable* arg = curFunc->vars[args[i]];
 			SI_ASSERT_FMT(sc_typeCmp(&arg->type, &mainTypes[i]), "Argument %llz's type is incorrect", i);
 		}
 	}
+#endif
 
 	for_range (i, 0, si_arrayLen(curFunc->code)) {
 		scAction* action = &curFunc->code[i];
@@ -324,8 +354,8 @@ start:
 	si_timeStampPrintSince(ts);
 #endif
 
-#if 1
-	ts = si_timeStampStart();
+#if 0
+ 	ts = si_timeStampStart();
 
 	for_range (i, 0, si_arrayLen(ast)) {
 		scAstNode* node = &ast[i];
@@ -390,8 +420,7 @@ start:
 #endif
 
 
-#if 1
-
+#if 0
 	alloc[SC_ASM] = si_allocatorMake(
 		sizeof(siArrayHeader) + si_arrayLen(ast) * sizeof(scAsm) +
 		3 * sizeof(scAsm) * si_arrayLen(functions) +
@@ -690,7 +719,7 @@ start:
 	si_timeStampPrintSince(ts);
 #endif
 
-#if 1
+#if 0
 	ts = si_timeStampStart();
 
 	usize elfSize = sizeof(elf64ElfHeader) + sizeof(elf64ProgramHeader);

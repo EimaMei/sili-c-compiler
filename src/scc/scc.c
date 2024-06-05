@@ -191,16 +191,21 @@ void sc_actionEvaluateEx(scAction* action, scAstNode* node, usize i) {
 	}
 }
 
-scVariable* sc_getVarAndOptimizeToken(scFunction* function, scTokenStruct* token) {
-	scVariable* var = nil;
-
+scVariable* sc_getVarAndOptimizeToken(scInfoTable* scope, scTokenStruct* token) {
 	if (token->type == SILEX_TOKEN_IDENTIFIER) {
-		var = si_hashtableGetWithHash(function->scope, token->token.identifier.hash);
+		scIdentifierKey key = si_hashtableGetWithHash(
+			scope->identifiers, token->token.identifier.hash
+		);
+		SI_STOPIF(key->type != SC_IDENTIFIER_KEY_VAR, return nil);
+		scVariable* var = (scVariable*)key->identifier;
+
 		if (var->init && var->init->type == SC_INIT_CONSTANT) {
 			token->type = SILEX_TOKEN_CONSTANT;
-			 token->token.constant = var->init->value.constant;
+			token->token.constant = var->init->value.constant;
 		}
+
+		return var;
 	}
 
-	return var;
+	return nil;
 }

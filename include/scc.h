@@ -70,7 +70,7 @@ SI_STATIC_ASSERT(sizeof(scVariable) == 40);
 
 typedef struct {
 	scType type;
-	scString name;
+	u64 name;
 	siArray(u32) parameters;
 	siArray(scAction) code;
 } scFunction;
@@ -95,24 +95,40 @@ typedef struct {
 	char identifier[];
 }* scIdentifierKey;
 
-typedef struct scInfoTable {
-	siHt(scIdentifierKey) identifiers;
-	scVariable* vars;
-	scVariable* types;
-	/* NOTE(EimaMei): 'scFunction* funcs' egzistuoja atmintyje tik globajai galiojimo
-	 * sričiai būtent po visų 'vars' elementų, taigi 'vars + si_arrayLen(identifiers)'.
-	 * Visos kitos 'scInfoTable' struktūros neturi šios ypatybės, kadangi jos yra
-	 * tik paprastos galiojimo sritys, kuriose negali būti deklaruojamos funkcijos. */
-	u32 stack;
+/* NOTE(EimaMei): Ši struktūra galioja tik globajai galiojimo sričiai, įprastiniams yra naudojama 'scInfoTable', kadangi juose neleidžiama deklaruoti funkcijas. */
+typedef struct scGlobalInfoTable {
 	struct scInfoTable* parent;
+	siHt(scIdentifierKey) identifiers;
+
+	u32 allocStart;
+	u32 stack;
+
+	usize varsLen;
+	scVariable* vars;
+
+	usize typesLen;
+	scVariable* types;
+
+	usize funcsLen;
+	scFunction* funcs;
+} scGlobalInfoTable;
+
+
+typedef struct scInfoTable {
+	struct scInfoTable* parent;
+	siHt(scIdentifierKey) identifiers;
+
+	u32 allocStart;
+	u32 stack;
+
+	usize varsLen;
+	scVariable* vars;
+
+	usize typesLen;
+	scVariable* types;
 } scInfoTable;
-SI_STATIC_ASSERT(sizeof(scInfoTable) == 40);
-
-
-
-#define sc_globalScopeFuncPtr(scope, index, varsInScope) \
-	(((scFunction*)&(scope)->vars[(varsInScope)]) + index)
-
+SI_STATIC_ASSERT(sizeof(scInfoTable) == 56);
+SI_STATIC_ASSERT(sizeof(scGlobalInfoTable) == 56 + sizeof(usize) * 2);
 
 typedef SI_ENUM(u32, scAsmType) {
 	SC_ASM_PUSH_R64 = 1,
@@ -170,7 +186,7 @@ extern scType type_double;
 		alloc[(type)] = si_allocatorMake(__VA_ARGS__); \
 		usize bytes = alloc[(type)]->maxLen; \
 		si_printf("%f MB\n", bytes / 1024.f / 1024.f); \
-		SI_ASSERT(bytes < limit); \
+		SI_ASSERT(bytes <= limit); \
 	} while (0)
 
 
@@ -190,6 +206,6 @@ scPunctuator sc_actionAddValues(scLexer* lex, scAction* action);
 
 void sc_actionEvaluateEx(scAction* action, scAstNode* node, usize i);
 
-scVariable* sc_getVarAndOptimizeToken(scFunction* function, scTokenStruct* token);
+scVariable* sc_getVarAndOptimizeToken(scInfoTable* scope, scTokenStruct* token);
 
 #endif /* SC_SCC_INCLUDE_H */

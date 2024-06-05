@@ -1212,6 +1212,8 @@ void si_allocatorResize(siAllocator* alloc, usize newSize);
 void si_allocatorReset(siAllocator* alloc);
 /* Resets the allocator to the given offset. */
 void si_allocatorResetFrom(siAllocator* alloc, usize offset);
+/* Resets the allocator to the current offset subtracted by the specified amount. */
+void si_allocatorResetSub(siAllocator* alloc, usize amount);
 /* Pushes a byte into the allocator. */
 void si_allocatorPush(siAllocator* alloc, siByte byte);
 /* Frees the allocator from memory. All allocations from the allocator are also
@@ -3031,6 +3033,13 @@ void si_allocatorResetFrom(siAllocator* alloc, usize offset) {
 	SI_ASSERT_NOT_NULL(alloc);
 	SI_ASSERT_MSG(offset < alloc->maxLen, "Provided offset is too large.");
 	alloc->offset = offset;
+}
+SIDEF
+void si_allocatorResetSub(siAllocator* alloc, usize amount) {
+	SI_ASSERT_NOT_NULL(alloc);
+	SI_ASSERT_MSG(amount < alloc->maxLen, "Provided amount is too large.");
+	alloc->offset -= amount;
+
 }
 SIDEF
 usize si_allocatorAvailable(siAllocator* alloc) {
@@ -5059,6 +5068,7 @@ siHashEntry* si_hashtableSetWithHash(const siHashTable ht, u64 hash, const rawpt
 
 	while (entry->key != 0) {
 		if (hash == entry->key) {
+			SI_PANIC_MSG("fix later");
 			entry->value = valuePtr;
 			return entry;
 		}
