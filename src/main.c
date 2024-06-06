@@ -128,7 +128,7 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 	usize stack = 0;
 	for_range (i, 0, si_arrayLen(func->parameters)) {
 		usize j = func->parameters[i];
-		scVariable* var = (scVariable*)si_cast(scIdentifierKey, scope->identifiers[j].value)->identifier;
+		scVariable* var = (scVariable*)((scIdentifierKey*)scope->identifiers[j].value)->identifier;
 		asm.type = 0;
 
 		switch (var->type.size) {
@@ -143,7 +143,7 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 				break;
 			}
 
-			default: SI_PANIC();
+			default: si_printf("%i\n", var->type.size); SI_PANIC();
 		}
 
 		var->location = stack;
@@ -166,14 +166,16 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 							scConstant constant = init->value.constant;
 							switch (var->type.size) {
 								case 4: {
+									stack = si_alignCeilEx(stack + 4, 4);
 									asm.type = SC_ASM_LD_M32_I32;
-									asm.dst = var->location;
 									asm.src = constant.value.integer;
 
 									break;
 								}
 								default: SI_PANIC();
 							}
+
+							asm.dst = stack;
 							break;
 						}
 						default: SI_PANIC();
@@ -204,12 +206,13 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 						}
 						case SC_INIT_IDENTIFIER: {
 							u64 hash = init->value.identifier.hash;
-							scIdentifierKey key = si_hashtableGetWithHash(scope->identifiers, hash);
+							scIdentifierKey* key = si_hashtableGetWithHash(scope->identifiers, hash);
+							scVariable* var = (scVariable*)key->identifier;
 
 							switch (func->type.size) {
 								case 4: {
 									asm.type = SC_ASM_RET_M32;
-									asm.src = key->identifier->var.location;
+									asm.src = var->location;
 
 									break;
 								}
@@ -303,7 +306,6 @@ int main(void) {
 		alloc[SC_MAIN], SC_MAX_VARS + SC_MAX_FUNCS
 	);
 
-	global_scope.stack = 0;
 	global_scope.scopeRank = 0;
 
 	global_scope.varsLen = 0;
@@ -393,11 +395,15 @@ start:
 								SI_ASSERT(res && lex.type == SILEX_TOKEN_IDENTIFIER);
 								u64 hash = lex.token.identifier.hash;
 
-								scVariable* pVar = si_mallocItem(alloc[SC_MAIN], scVariable);
+								scIdentifierKey* key = si_malloc(alloc[SC_MAIN], sizeof(scIdentifierKey) + sizeof(scVariable));
+								key->type = SC_IDENTIFIER_KEY_VAR;
+								key->rank = funcScope->rank;
+
+								scVariable* pVar = (scVariable*)key->identifier;
 								pVar->type = type;
 								pVar->init = 0;
 
-								siHashEntry* param = si_hashtableSetWithHash(funcScope->identifiers, hash, pVar);
+								siHashEntry* param = si_hashtableSetWithHash(funcScope->identifiers, hash, key);
 								params[paramsLen] = param - funcScope->identifiers;
 								paramsLen += 1;
 
@@ -438,7 +444,11 @@ start:
 						}
 
 						case '=': {
-							scVariable* pVar = si_mallocItem(alloc[SC_MAIN], scVariable);
+							scIdentifierKey* key = si_malloc(alloc[SC_MAIN], sizeof(scIdentifierKey) + sizeof(scVariable));
+							key->type = SC_IDENTIFIER_KEY_VAR;
+							key->rank = scope->rank;
+
+							scVariable* pVar = (scVariable*)key->identifier;
 							pVar->type = type;
 
 							scAction action;
@@ -449,7 +459,7 @@ start:
 							scPunctuator punc = sc_actionAddValues(&lex, &action);
 							if (curFunc != nil) {
 								si_arrayPush(&curFunc->code, action);
-								si_hashtableSetWithHash(scope->identifiers, name, pVar);
+								si_hashtableSetWithHash(scope->identifiers, name, key);
 							}
 							else {
 								SI_PANIC();
@@ -492,14 +502,29 @@ start:
 
 			case SILEX_TOKEN_PUNCTUATOR: {
 				switch (lex.token.punctuator) {
+					case '{': {
+						SI_PANIC();
+						scAction action;
+						action.type = SC_AST_SCOPE_BEGIN;
+						action.values = (scTokenStruct*)scope;
+						si_arrayPush(&curFunc->code, action);
+						break;
+					}
 					case '}': {
-						sc_parseFunction(scope, curFunc, asm);
-
+						scInfoTable* oldScope = scope;
 						scope = scope->parent;
 
 						if (scope->parent == nil) {
+							sc_parseFunction(oldScope, curFunc, asm);
 							curFunc = nil;
+							break;
 						}
+
+						SI_PANIC();
+						scAction action;
+						action.type = SC_AST_SCOPE_END;
+						action.values = (scTokenStruct*)scope;
+						si_arrayPush(&curFunc->code, action);
 						break;
 					}
 				}
@@ -539,20 +564,14 @@ start:
 	}
 #endif
 
-
-
-
-
-#if 0
-
-	alloc[SC_X86ASM] = si_allocatorMake(2 * sizeof(u8) * 16 * si_arrayLen(instructions));
-	bytes = alloc[SC_X86ASM]->maxLen;
-	si_printf("%f MB\n", bytes / 1024.f / 1024.f);
-	SI_ASSERT(bytes < SI_MEGA(1));
-
+	SC_ALLOCATOR_MAKE(
+		SC_X86ASM,
+		USIZE_MAX,
+		16 * sizeof(u8) * si_arrayLen(asm)
+	);
 
 	usize x86Len = 0;
-	u8* x86 = si_mallocArray(alloc[SC_X86ASM], u8, 16 * si_arrayLen(instructions));
+	u8* x86 = si_mallocArray(alloc[SC_X86ASM], u8, alloc[SC_X86ASM]->maxLen);
 
 	ts = si_timeStampStart();
 
@@ -563,10 +582,9 @@ start:
 	usize offset = sizeof(elf64ElfHeader) + sizeof(elf64ProgramHeader);
 
 	ts = si_timeStampStart();
-	si_timeStampPrintSince(ts);
 
-	for_range (i, 0, si_arrayLen(instructions)) {
-		scAsm* instruction = &instructions[i];
+	for_range (i, 0, si_arrayLen(asm)) {
+		scAsm* instruction = &asm[i];
 		usize len;
 
 		switch (instruction->type) {
@@ -613,7 +631,6 @@ start:
 				break;
 			}
 
-
 			case SC_ASM_LD_M32_I32: {
 				len = sc_x86Opcode(
 					X86_MOV_RM32_I32,
@@ -628,7 +645,7 @@ start:
 			}
 
 			case SC_ASM_RET_I32: {
-				if (curFunc->name.hash != hash_main) {
+				//if (curFunc->name.hash != hash_main) {
 					len = sc_x86Opcode(
 						X86_MOV_R32_I32,
 						X86_CFG_ID | X86_CFG_DST_R,
@@ -640,6 +657,7 @@ start:
 
 					x86[x86Len + len + 1] = X86_RET;
 					len += 2;
+#if 0
 				}
 				else {
 					len = sc_x86Opcode(
@@ -662,16 +680,19 @@ start:
 					x86[x86Len + len + 2] = X86_SYSCALL_L;
 					len += 3;
 				}
+#endif
 
 				x86Len += len;
 				break;
 			}
 
 			case SC_ASM_RET_M32: {
+#if 0
 				if (curFunc->name.hash != hash_main) {
+#endif
 					len = sc_x86Opcode(
-						X86_MOV_R32_I32,
-						X86_CFG_ID | X86_CFG_DST_R,
+						X86_MOV_R32_RM32,
+						X86_CFG_RMB | X86_CFG_DST_R | X86_CFG_SRC_M,
 						RAX,
 						instruction->src,
 						&x86[x86Len]
@@ -680,6 +701,7 @@ start:
 
 					x86[x86Len + len + 1] = X86_RET;
 					len += 2;
+#if 0
 				}
 				else {
 					len = sc_x86Opcode(
@@ -702,6 +724,7 @@ start:
 					x86[x86Len + len + 2] = X86_SYSCALL_L;
 					len += 3;
 				}
+#endif
 
 				x86Len += len;
 				break;
@@ -717,7 +740,6 @@ start:
 	}
 
 	si_timeStampPrintSince(ts);
-#endif
 
 #if 0
 	ts = si_timeStampStart();

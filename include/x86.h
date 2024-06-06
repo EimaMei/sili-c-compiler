@@ -128,14 +128,14 @@ usize sc_x86Opcode(u8 opcode, x86Config config, u64 dst, u64 src, u8* out) {
 		out[i] = X86RMBYTE(mod, reg, rm), i += 1;
 
 		if (mod == X86_OPERAND_M8) {
-			u8 val = -(u8)dst;
+			u8 val = (config & X86_CFG_SRC_M) ? -(u8)src : -(u8)dst;
 			memcpy(&out[i], &val, 1), i += 1;
 		}
 		else if (mod == X86_OPERAND_M32) {SI_PANIC(); }
 	}
 
 	if (config & X86_CFG_ID) {
-		memcpy(&out[i], &src, 4), i += 4;
+		memcpy(&out[i], &src, sizeof(u32)), i += 4;
 	}
 	return i;
 }

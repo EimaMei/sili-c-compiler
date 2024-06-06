@@ -27,7 +27,10 @@ typedef struct scInitializer {
 } scInitializer;
 
 typedef SI_ENUM(u32, scActionType) {
-	SC_ACTION_VAR_ASSIGN = 1,
+	SC_ACTION_SCOPE_BEGIN = 1,
+	SC_ACTION_SCOPE_END,
+
+	SC_ACTION_VAR_ASSIGN,
 	SC_ACTION_VAR_CREATE,
 	SC_ACTION_RETURN,
 };
@@ -72,6 +75,8 @@ typedef struct {
 
 typedef SI_ENUM(u32, scAstNodeType) {
 	SC_AST_VAR_MAKE = 1,
+	SC_AST_SCOPE_BEGIN,
+	SC_AST_SCOPE_END,
 	SC_AST_RETURN
 };
 
@@ -94,10 +99,9 @@ typedef SI_ENUM(u16, scIdentifierKeyType) {
 typedef struct {
 	scIdentifierKeyType type;
 	u16 rank;
-	union {
-		scVariable var;
-	} identifier[];
-}* scIdentifierKey;
+	char identifier[];
+} scIdentifierKey;
+SI_STATIC_ASSERT(sizeof(scIdentifierKey) == 4);
 
 /* NOTE(EimaMei): Ši struktūra galioja tik globajai galiojimo sričiai, įprastiniams
  * yra naudojama 'scInfoTable', kadangi juose neleidžiama deklaruoti funkcijas. */
@@ -105,7 +109,6 @@ typedef struct scGlobalInfoTable {
 	struct scInfoTable* parent;
 	siHt(scIdentifierKey) identifiers;
 
-	u32 stack;
 	u32 scopeRank;
 
 	usize varsLen;

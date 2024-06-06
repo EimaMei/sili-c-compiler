@@ -193,7 +193,7 @@ void sc_actionEvaluateEx(scAction* action, scAstNode* node, usize i) {
 
 scVariable* sc_getVarAndOptimizeToken(scInfoTable* scope, scTokenStruct* token) {
 	if (token->type == SILEX_TOKEN_IDENTIFIER) {
-		scIdentifierKey key = si_hashtableGetWithHash(
+		scIdentifierKey* key = si_hashtableGetWithHash(
 			scope->identifiers, token->token.identifier.hash
 		);
 		SI_STOPIF(key->type != SC_IDENTIFIER_KEY_VAR, return nil);
