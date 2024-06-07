@@ -103,6 +103,9 @@ MACROS
 	'si__hashKey' inside this file, creating the option of defining a custom
 	implementation.
 
+	- SI_NO_HASH_OVERWRITE - disables the ovewrite of a pre-existing entry's
+	value when using 'si_hashtableSet/WithHash'.
+
 ===========================================================================
 CREDITS
 	- Ginger Bill's 'gb.h' (https://github.com//gingerBill/gb) - inspired me to
@@ -954,10 +957,10 @@ usize si_assertEx(b32 condition, cstring conditionStr, cstring file, i32 line,
 #endif /* SI_NO_ASSERTIONS_IN_HEADER */
 
 /* Crashes the app immediately. */
-#define SI_PANIC() si_assertEx(false, "SI_PANIC()", __FILE__, __LINE__, __func__, nil); SI_DEBUG_TRAP()
+#define SI_PANIC() do { si_assertEx(false, "SI_PANIC()", __FILE__, __LINE__, __func__, nil); SI_DEBUG_TRAP(); } while (0)
 /* message - cstring
  * Crashes the app immediately with a message. */
-#define SI_PANIC_MSG(message) si_assertEx(false, "SI_PANIC()", __FILE__, __LINE__, __func__, message, ""); SI_DEBUG_TRAP()
+#define SI_PANIC_MSG(message) do { si_assertEx(false, "SI_PANIC()", __FILE__, __LINE__, __func__, message, ""); SI_DEBUG_TRAP(); } while(0)
 /* condition - EXPRESSION | ACTION - ANYTHING
  * Checks if the condition is true. If it is, execute 'action'. */
 #define SI_STOPIF(condition, .../* ACTION */) if (condition) { __VA_ARGS__; } do {} while(0)
@@ -1917,10 +1920,15 @@ rawptr si_hashtableGet(const siHashTable ht, const rawptr key, usize keyLen);
 /* Returns the key entry's value pointer from the hash table. If not found, nil
  * is returned. */
 rawptr si_hashtableGetWithHash(const siHashTable ht, u64 hash);
-/* Adds a 'key' entry to the hash table. */
+/* Adds a 'key' entry to the hash table and returns the entry pointer, regardless
+ * if it's a new or pre-existing one. 'outSuccess' is set to true if the hash
+ * didn't exist before the set, otherwise it's set to 'false' and the entry's
+ * value's gets overwritten either way (unless disabled via a macro). 'outSuccess'
+ * can be nullable.*/
 siHashEntry* si_hashtableSet(siHashTable ht, const rawptr key, usize keyLen,
-		const rawptr valuePtr);
-siHashEntry* si_hashtableSetWithHash(const siHashTable ht, u64 hash, const rawptr valuePtr);
+		const rawptr valuePtr, b32* outSuccess);
+siHashEntry* si_hashtableSetWithHash(const siHashTable ht, u64 hash, const rawptr valuePtr,
+		b32* outSuccess);
 
 #endif /* SI_NO_HASHTABLE */
 
@@ -4987,7 +4995,7 @@ siHashTable si_hashtableMake(siAllocator* alloc, const rawptr* keyArray, usize k
 
 	siByte* ptr = (siByte*)dataArray;
 	for_range (i, 0, len) {
-		si_hashtableSet(table, keyArray[i], keyLen, ptr);
+		si_hashtableSet(table, keyArray[i], keyLen, ptr, nil);
 		ptr += sizeofElement;
 	}
 
@@ -5047,16 +5055,17 @@ skip:
 	return nil;
 }
 siHashEntry* si_hashtableSet(siHashTable ht, const rawptr key, usize keyLen,
-		const rawptr valuePtr) {
+		const rawptr valuePtr, b32* outSuccess) {
 	SI_ASSERT_NOT_NULL(ht);
 	SI_ASSERT_NOT_NULL(key);
 	SI_ASSERT(keyLen != 0);
 
 	u64 hash = si__hashKey(key, keyLen);
-	return si_hashtableSetWithHash(ht, hash, valuePtr);
+	return si_hashtableSetWithHash(ht, hash, valuePtr, outSuccess);
 }
 SIDEF
-siHashEntry* si_hashtableSetWithHash(const siHashTable ht, u64 hash, const rawptr valuePtr) {
+siHashEntry* si_hashtableSetWithHash(const siHashTable ht, u64 hash, const rawptr valuePtr,
+		b32* outSuccess) {
 	SI_ASSERT_NOT_NULL(ht);
 
 	siArrayHeader* header = SI_ARRAY_HEADER(ht);
@@ -5068,8 +5077,10 @@ siHashEntry* si_hashtableSetWithHash(const siHashTable ht, u64 hash, const rawpt
 
 	while (entry->key != 0) {
 		if (hash == entry->key) {
-			SI_PANIC_MSG("fix later");
+			SI_STOPIF(outSuccess != nil, *outSuccess = false);
+#if !defined(SI_NO_HASH_OVERWRITE)
 			entry->value = valuePtr;
+#endif
 			return entry;
 		}
 
@@ -5084,6 +5095,7 @@ siHashEntry* si_hashtableSetWithHash(const siHashTable ht, u64 hash, const rawpt
 		while (original->next != 0) { original = original->next; }
 		original->next = entry;
 	}
+	SI_STOPIF(outSuccess != nil, *outSuccess = true);
 
 	header->len += 1;
 	return entry;

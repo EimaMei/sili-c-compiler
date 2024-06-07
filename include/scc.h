@@ -68,26 +68,12 @@ typedef struct {
 typedef struct {
 	scType type;
 	u64 name;
-	siArray(u32) parameters;
+	usize paramLen;
+	scType* paramTypes;
+	u32* paramVars;
 	siArray(scAction) code;
+	u32 location;
 } scFunction;
-
-
-typedef SI_ENUM(u32, scAstNodeType) {
-	SC_AST_VAR_MAKE = 1,
-	SC_AST_SCOPE_BEGIN,
-	SC_AST_SCOPE_END,
-	SC_AST_RETURN
-};
-
-typedef struct {
-	scAstNodeType type;
-	scInitializer* init;
-	union {
-		scVariable* var;
-	} extra;
-} scAstNode;
-SI_STATIC_ASSERT(sizeof(scAstNode) == 24);
 
 
 typedef SI_ENUM(u16, scIdentifierKeyType) {
@@ -103,6 +89,22 @@ typedef struct {
 } scIdentifierKey;
 SI_STATIC_ASSERT(sizeof(scIdentifierKey) == 4);
 
+
+typedef SI_ENUM(u32, scAstNodeType) {
+	SC_AST_VAR_MAKE = 1,
+	SC_AST_SCOPE_BEGIN,
+	SC_AST_SCOPE_END,
+	SC_AST_RETURN
+};
+
+typedef struct {
+	scAstNodeType type;
+	scInitializer* init;
+	scIdentifierKey* key;
+} scAstNode;
+SI_STATIC_ASSERT(sizeof(scAstNode) == 24);
+
+
 /* NOTE(EimaMei): Ši struktūra galioja tik globajai galiojimo sričiai, įprastiniams
  * yra naudojama 'scInfoTable', kadangi juose neleidžiama deklaruoti funkcijas. */
 typedef struct scGlobalInfoTable {
@@ -110,6 +112,7 @@ typedef struct scGlobalInfoTable {
 	siHt(scIdentifierKey) identifiers;
 
 	u32 scopeRank;
+	u32 mainFuncID;
 
 	usize varsLen;
 	scVariable* vars;
@@ -139,22 +142,41 @@ SI_STATIC_ASSERT(sizeof(scInfoTable) == 56);
 SI_STATIC_ASSERT(sizeof(scGlobalInfoTable) == sizeof(scInfoTable) + sizeof(usize) * 2);
 
 typedef SI_ENUM(u32, scAsmType) {
-	SC_ASM_PUSH_R64 = 1,
+	SC_ASM_FUNC_START = 1,
+
+	SC_ASM_PUSH_R64,
 	SC_ASM_POP_R64,
+
 
 	SC_ASM_LD_M8_FUNC_PARAM,
 	SC_ASM_LD_M16_FUNC_PARAM,
 	SC_ASM_LD_M32_FUNC_PARAM,
 	SC_ASM_LD_M64_FUNC_PARAM,
 
+	SC_ASM_LD_R64_M64,
+	SC_ASM_LEA_R64_M64,
+
+	SC_ASM_LD_R32_M32,
 	SC_ASM_LD_M8_I8,
 	SC_ASM_LD_M16_I16,
 	SC_ASM_LD_M32_I32,
 	SC_ASM_LD_M64_I32,
 	SC_ASM_LD_M64_I64,
 
+	SC_ASM_LD_M32_M32,
+
+
+	SC_ASM_ADD_M32_I32,
+
+
+	SC_ASM_CALL,
+
+
 	SC_ASM_RET_I32,
 	SC_ASM_RET_M32,
+
+
+	SC_ASM_SYSCALL,
 };
 
 typedef struct {
@@ -178,6 +200,8 @@ typedef SI_ENUM(u32, scIndex) {
 	SC_ALLOC_LEN
 };
 extern siAllocator* alloc[SC_ALLOC_LEN];
+
+extern scGlobalInfoTable global_scope;
 
 extern usize sizeof_SIZE_T;
 
@@ -215,6 +239,6 @@ scPunctuator sc_actionAddValues(scLexer* lex, scAction* action);
 
 void sc_actionEvaluateEx(scAction* action, scAstNode* node, usize i);
 
-scVariable* sc_getVarAndOptimizeToken(scInfoTable* scope, scTokenStruct* token);
+scVariable* sc_getVarAndOptimizeToken(scInfoTable* scope, scTokenStruct* token, i32* res);
 
 #endif /* SC_SCC_INCLUDE_H */

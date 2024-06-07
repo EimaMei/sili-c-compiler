@@ -39,9 +39,11 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 
 		switch (action->type) {
 			case SC_ACTION_VAR_ASSIGN: {
-				scVariable* var = *si_cast(scVariable**, &action->values[0]);
+				scIdentifierKey* key = *si_cast(scIdentifierKey**, &action->values[0]);
+				scVariable* var = (scVariable*)key->identifier;
+
 				node.type = SC_AST_VAR_MAKE;
-				node.extra.var = var;
+				node.key = key;
 
 				sc_actionEvaluateEx(action, &node, 1);
 				var->init = node.init;
@@ -87,8 +89,19 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 						}
 					}
 
-					scVariable* leftVar = sc_getVarAndOptimizeToken(scope, left);
-					scVariable* rightVar = sc_getVarAndOptimizeToken(scope, right);
+					i32 err1, err2;
+					scVariable* leftVar = sc_getVarAndOptimizeToken(scope, left, &err1);
+					scVariable* rightVar = sc_getVarAndOptimizeToken(scope, right, &err2);
+
+
+					if (err1 > 1) {
+						cstring errors[] = {"Variable doesn't exist", "Cannot use type/function as a valid initializer."};
+						SI_PANIC_MSG(errors[err2 == 3]);
+					}
+					if (err2 > 1) {
+						cstring errors[] = {"Variable doesn't exist", "Cannot use type/function as a valid initializer."};
+						SI_PANIC_MSG(errors[err2 == 3]);
+					}
 
 					if (left->type == SILEX_TOKEN_CONSTANT && left->type == right->type) {
 						scOperator op = init->value.binary.operator;
@@ -97,13 +110,13 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 						sc_initializerConstantCalc(init, op, right);
 						prevInit = init;
 					}
-					else { SI_PANIC(); }
 
 					break;
 				}
 				case SC_INIT_IDENTIFIER: {
 					scString identifier = init->value.identifier;
-					scVariable* var = si_hashtableGetWithHash(scope->identifiers, identifier.hash);
+					scIdentifierKey* key = si_hashtableGetWithHash(scope->identifiers, identifier.hash);
+					scVariable* var = (scVariable*)key->identifier;
 
 					if (var->init && var->init->type == SC_INIT_CONSTANT) {
 						init->type = SC_INIT_CONSTANT;
@@ -125,10 +138,16 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 	asm.type = SC_ASM_PUSH_R64;
 	si_arrayPush(&instructions, asm);
 
+	asm.type = SC_ASM_FUNC_START;
+	asm.src = func - global_scope.funcs;
+	si_arrayPush(&instructions, asm);
+
 	usize stack = 0;
-	for_range (i, 0, si_arrayLen(func->parameters)) {
-		usize j = func->parameters[i];
-		scVariable* var = (scVariable*)((scIdentifierKey*)scope->identifiers[j].value)->identifier;
+	for_range (i, 0, func->paramLen) {
+		usize j = func->paramVars[i];
+
+		scIdentifierKey* key = scope->identifiers[j].value;
+		scVariable* var = (scVariable*)key->identifier;
 		asm.type = 0;
 
 		switch (var->type.size) {
@@ -146,6 +165,7 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 			default: si_printf("%i\n", var->type.size); SI_PANIC();
 		}
 
+		key->rank = UINT16_MAX;
 		var->location = stack;
 		asm.dst = stack;
 		si_arrayPush(&instructions, asm);
@@ -156,17 +176,18 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 
 		switch (node->type) {
 			case SC_AST_VAR_MAKE: {
-				scVariable* var = node->extra.var;
+				scVariable* var = (scVariable*)node->key->identifier;
 				scInitializer* inits = node->init;
 
 				scInitializer* init = inits;
+				stack = si_alignCeilEx(stack + var->type.size, var->type.size);
+
 				while (init != nil) {
 					switch (init->type) {
 						case SC_INIT_CONSTANT: {
 							scConstant constant = init->value.constant;
 							switch (var->type.size) {
 								case 4: {
-									stack = si_alignCeilEx(stack + 4, 4);
 									asm.type = SC_ASM_LD_M32_I32;
 									asm.src = constant.value.integer;
 
@@ -176,6 +197,52 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 							}
 
 							asm.dst = stack;
+							break;
+						}
+						case SC_INIT_BINARY: {
+							scTokenStruct* left = init->value.binary.left,
+										  *right = init->value.binary.right;
+							scOperator operator = init->value.binary.operator;
+
+							switch (left->type) {
+								case SILEX_TOKEN_IDENTIFIER: {
+									scIdentifierKey* key = si_hashtableGetWithHash(scope->identifiers, left->token.identifier.hash);
+									SI_ASSERT(key->type != SC_IDENTIFIER_KEY_FUNC);
+									scVariable* var = (scVariable*)key->identifier;
+
+									switch (var->type.size){
+										case 4: {
+											asm.type = SC_ASM_LD_M32_M32;
+											asm.dst = stack;
+											asm.src = var->location;
+											si_arrayPush(&instructions, asm);
+
+											break;
+										}
+										default: SI_PANIC();
+									}
+									break;
+								}
+								default: SI_PANIC();
+							}
+
+							switch (right->type) {
+								case SILEX_TOKEN_CONSTANT: {
+									scConstant constant = right->token.constant;
+
+									switch (operator) {
+										case SILEX_OPERATOR_PLUS:
+											asm.type = SC_ASM_ADD_M32_I32;
+											asm.dst = stack;
+											asm.src = constant.value.integer;
+											break;
+										default: SI_PANIC();
+									}
+									break;
+								}
+								default: SI_PANIC();
+							}
+
 							break;
 						}
 						default: SI_PANIC();
@@ -234,6 +301,28 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 		si_arrayPush(&instructions, asm);
 	}
 }
+
+
+void sc_functionValidateMain(scFunction* func) {
+	scType retType = func->type;
+	SI_ASSERT_MSG(retType.traits == SC_TYPE_INT && retType.size == 4, "'main' must return 'int'.");
+
+	SI_ASSERT_MSG(si_betweenu(func->paramLen, 0, 2), "A 'main' function can only contain up to 2 parameters.");
+
+	scType mainTypes[2];
+	mainTypes[0] = type_int; /* int argc */
+	mainTypes[1] = (scType){ /* char** argv */
+		.size = 8, .ptr = &type_char, .ptrCount = 2, .traits = type_char.traits
+	};
+
+	for_range (i, 0, func->paramLen) {
+		scType* type = &func->paramTypes[i];
+		SI_ASSERT_FMT(sc_typeCmp(type, &mainTypes[i]), "Argument %llz's type is incorrect", i + 1);
+	}
+}
+
+scGlobalInfoTable global_scope;
+u64 hash_main;
 
 int main(void) {
 #if 0
@@ -300,13 +389,13 @@ int main(void) {
 	);
 	siArray(scAsm) asm = si_arrayMakeReserve(alloc[SC_ASM], sizeof(scAsm), (SI_MEGA(3) / sizeof(scAsm)) - 2 * sizeof(scAsm));
 
-	scGlobalInfoTable global_scope;
 	global_scope.parent = nil;
 	global_scope.identifiers = si_hashtableMakeReserve(
 		alloc[SC_MAIN], SC_MAX_VARS + SC_MAX_FUNCS
 	);
 
 	global_scope.scopeRank = 0;
+	global_scope.mainFuncID = 0;
 
 	global_scope.varsLen = 0;
 	global_scope.vars = si_malloc(
@@ -326,6 +415,12 @@ int main(void) {
 
 	scInfoTable* scope = (scInfoTable*)&global_scope;
 	scFunction* curFunc = nil;
+
+    hash_main = 14695981039346656037UL;
+    for_range (i, 0, 4) {
+		SILEX_HASH_FUNC(hash_main, "main"[i]);
+	}
+
 #endif
 
 #if 0 /* TESTING THE PERFORMANCE OF si_hashtableGet */
@@ -373,73 +468,127 @@ start:
 						case '(': {
 							SI_ASSERT(isCreatingVar == false);
 
-							scInfoTable* funcScope = si_mallocItem(alloc[SC_SCOPE], scInfoTable);
+							scFunction* func;
+							scInfoTable* funcScope;
+
+							u32 params[128];
+							usize paramsLen = 0;
+
+							b32 res, funcIsNew;
+							/* TODO(EimaMei): Atpažinti K&R apibrėžtis ir nepa-
+							 * vadintas deklaracijas. */
+							siHashEntry* entry;
+
+							funcScope = si_mallocItem(alloc[SC_SCOPE], scInfoTable);
 							*funcScope = *scope;
 							funcScope->parent = scope;
-							funcScope->rank += 1;
+							funcScope->rank = 1;
 
-							scFunction* func = &global_scope.funcs[global_scope.funcsLen];
-							func->type = type;
-							func->name = name;
-							func->code = si_arrayMakeReserve(alloc[SC_MAIN], sizeof(scAction), 0);
+							entry = si_hashtableSetWithHash(global_scope.identifiers, name, nil, &funcIsNew);
+							if (funcIsNew) {
+								scIdentifierKey* key = si_malloc(alloc[SC_MAIN], sizeof(scIdentifierKey) + sizeof(scFunction));
+								key->type = SC_IDENTIFIER_KEY_FUNC;
+								/* key->rank = scope->rank; */
 
-							global_scope.funcsLen += 1;
-							si_hashtableSetWithHash(global_scope.identifiers, name, func);
+								func = (scFunction*)key->identifier;
+								func->type = type;
+								func->name = name;
+								func->code = si_arrayMakeReserve(alloc[SC_MAIN], sizeof(scAction), 0);
 
-							usize paramsLen = 0;
-							u32 params[128];
+								entry->value = key;
+								global_scope.funcsLen += 1;
+							}
+							else {
+								scIdentifierKey* key = entry->value;
+								SI_ASSERT(key->type == SC_IDENTIFIER_KEY_FUNC);
+								func = (scFunction*)key->identifier;
+							}
 
-							while (res) {
+							paramLoop: {
 								res = silex_lexerTokenGet(&lex);
+
 								scType type = sc_typeGet(&lex);
 								SI_ASSERT(res && lex.type == SILEX_TOKEN_IDENTIFIER);
 								u64 hash = lex.token.identifier.hash;
 
-								scIdentifierKey* key = si_malloc(alloc[SC_MAIN], sizeof(scIdentifierKey) + sizeof(scVariable));
-								key->type = SC_IDENTIFIER_KEY_VAR;
-								key->rank = funcScope->rank;
+								if (!funcIsNew) {
+									scType* oldType = &func->paramTypes[paramsLen];
+									SI_ASSERT(sc_typeCmp(&type, oldType));
+								}
+								else {
+									scIdentifierKey* key = si_malloc(alloc[SC_MAIN], sizeof(scIdentifierKey) + sizeof(scVariable));
+									key->type = SC_IDENTIFIER_KEY_VAR;
+									key->rank = funcScope->rank;
 
-								scVariable* pVar = (scVariable*)key->identifier;
-								pVar->type = type;
-								pVar->init = 0;
+									scVariable* pVar = (scVariable*)key->identifier;
+									pVar->type = type;
+									pVar->init = nil;
 
-								siHashEntry* param = si_hashtableSetWithHash(funcScope->identifiers, hash, key);
-								params[paramsLen] = param - funcScope->identifiers;
-								paramsLen += 1;
+									siHashEntry* param = si_hashtableSetWithHash(funcScope->identifiers, hash, key, &res);
+									SI_ASSERT(res);
 
-								res = silex_lexerTokenGet(&lex);
-								SI_ASSERT(res && lex.type == SILEX_TOKEN_PUNCTUATOR);
+									params[paramsLen] = param - funcScope->identifiers;
+									paramsLen += 1;
+								}
+
+								do {
+									res = silex_lexerTokenGet(&lex);
+									SI_ASSERT(res);
+								} while (lex.type != SILEX_TOKEN_PUNCTUATOR);
 								scPunctuator punc = lex.token.punctuator;
 
-								if (punc == ',') {
-									continue;
-								}
-								else if (punc == ')') {
-									break;
+								switch (punc) {
+									case ',': goto paramLoop;
+									case ')': break;
+									default: SI_PANIC();
 								}
 							}
 
-							func->parameters = si_arrayMakeReserve(alloc[SC_MAIN], sizeof(u32), paramsLen);
-							SI_ARRAY_HEADER(func->parameters)->len = paramsLen;
-							for_range (i, 0, paramsLen) {
-								func->parameters[i] = params[i];
-							}
-
-
-							b32 res = silex_lexerTokenGet(&lex);
+							res = silex_lexerTokenGet(&lex);
 							SI_ASSERT(res && lex.type == SILEX_TOKEN_PUNCTUATOR);
+
+							if (funcIsNew) {
+								func->paramLen = paramsLen;
+								func->paramVars = si_mallocArray(alloc[SC_MAIN], u32, paramsLen);
+								func->paramTypes = si_mallocArray(alloc[SC_MAIN], scType, paramsLen);
+							}
 
 							switch (lex.token.punctuator) {
 								case '{': {
 									curFunc = func;
 									scope = funcScope;
+
+									for_range (i, 0, paramsLen * funcIsNew) {
+										usize index = params[i];
+										scIdentifierKey* key = funcScope->identifiers[index].value;
+
+										func->paramTypes[i] = ((scVariable*)key->identifier)->type;
+										func->paramVars[i] = index;
+										funcScope->varsLen += 1;
+									}
+
 									break;
 								}
-								case ';': break;
+								case ';': {
+									scope->rank = UINT16_MAX;
+									for_range (i, 0, paramsLen) {
+										usize index = params[i];
+										scIdentifierKey* key = funcScope->identifiers[index].value;
+
+										func->paramTypes[i] = ((scVariable*)key->identifier)->type;
+										func->paramVars[i] = index;
+										key->rank = UINT16_MAX;
+									}
+									break;
+								}
 								default: SI_PANIC_MSG("Cannot use this punctuator after a function declaration");
 							}
 
-
+							if (name == hash_main) {
+								sc_functionValidateMain(func);
+								global_scope.mainFuncID = func - global_scope.funcs;
+								hash_main = 0;
+							}
 							break;
 						}
 
@@ -454,16 +603,23 @@ start:
 							scAction action;
 							action.type = SC_ACTION_VAR_ASSIGN;
 							action.values = si_arrayMakeReserve(alloc[SC_MAIN], sizeof(scTokenStruct), 2);
-							si_arrayPush(&action.values, pVar);
+							si_arrayPush(&action.values, key);
 
 							scPunctuator punc = sc_actionAddValues(&lex, &action);
-							if (curFunc != nil) {
-								si_arrayPush(&curFunc->code, action);
-								si_hashtableSetWithHash(scope->identifiers, name, key);
-							}
-							else {
+							if (curFunc == nil) {
 								SI_PANIC();
 							}
+
+							b32 res;
+							siHashEntry* entry = si_hashtableSetWithHash(scope->identifiers, name, key, &res);
+							if (res == false) {
+								scIdentifierKey* oldKey = entry->value;
+								SI_ASSERT_MSG(key->rank < oldKey->rank, "Variable already exists.");
+								entry->value = key;
+							}
+
+							si_arrayPush(&curFunc->code, action);
+							scope->varsLen += 1;
 
 							if (punc == ',') {
 								if (type.ptr) {
@@ -513,6 +669,11 @@ start:
 					case '}': {
 						scInfoTable* oldScope = scope;
 						scope = scope->parent;
+						SI_ASSERT_NOT_NULL(scope);
+
+						usize dif = (oldScope->varsLen + oldScope->typesLen) - (scope->varsLen + scope->typesLen);
+						SI_ARRAY_HEADER(scope->identifiers)->len -= dif;
+						si_allocatorResetSub(alloc[SC_SCOPE], sizeof(scInfoTable));
 
 						if (scope->parent == nil) {
 							sc_parseFunction(oldScope, curFunc, asm);
@@ -535,34 +696,8 @@ start:
 	si_timeStampPrintSince(ts);
 #endif
 
-#if 0
-	ts = si_timeStampStart();
-	SILEX_HASH_FUNC_INIT(hash_main);
-	{
-		for_range (i, 0, 4) {
-			SILEX_HASH_FUNC(hash_main, "main"[i]);
-		}
 
-		if (curFunc->name != hash_main) {
-			curFunc = si_hashtableGetWithHash(global_scope.identifiers, hash_main);
-		}
-		SI_ASSERT_MSG(curFunc != nil, "main needs to exist");
 
-		scType retType = curFunc->type;
-		SI_ASSERT_MSG(retType.traits == SC_TYPE_INT && retType.size == 4, "'main' must return 'int'.");
-
-		siArray(u32) args = curFunc->parameters;
-		SI_ASSERT_MSG(si_arrayLen(args) == 0 || si_arrayLen(args) <= 2, "'main' has to either be empty or contain up to 2 parameters.");
-
-		scType mainTypes[2];
-		mainTypes[0] = type_int;
-		mainTypes[1] = (scType){.size = 8, .ptr = &type_char, .ptrCount = 2, .traits = type_char.traits};
-		for_range (i, 0, si_arrayLen(args)) {
-			scVariable* arg = curFunc->vars[args[i]];
-			SI_ASSERT_FMT(sc_typeCmp(&arg->type, &mainTypes[i]), "Argument %llz's type is incorrect", i);
-		}
-	}
-#endif
 
 	SC_ALLOCATOR_MAKE(
 		SC_X86ASM,
@@ -573,21 +708,24 @@ start:
 	usize x86Len = 0;
 	u8* x86 = si_mallocArray(alloc[SC_X86ASM], u8, alloc[SC_X86ASM]->maxLen);
 
-	ts = si_timeStampStart();
-
-
+	usize len;
 	x86EnvironmentState x86state;
 	x86state.conv = X86_CALLING_CONV_SYSTEM_V_X86;
 	x86state.registers = 0;
-	usize offset = sizeof(elf64ElfHeader) + sizeof(elf64ProgramHeader);
 
 	ts = si_timeStampStart();
 
 	for_range (i, 0, si_arrayLen(asm)) {
 		scAsm* instruction = &asm[i];
-		usize len;
 
 		switch (instruction->type) {
+			case SC_ASM_FUNC_START: {
+				scFunction* func = &global_scope.funcs[instruction->src];
+				func->location = x86Len;
+				x86state.registers = 0;
+				continue;
+			}
+
 			case SC_ASM_PUSH_R64: {
 				x86[x86Len] = X86_PUSH_R64 + RBP;
 				len = 1;
@@ -644,6 +782,40 @@ start:
 				break;
 			}
 
+			case SC_ASM_LD_M32_M32: {
+				x86Register reg = sc_x86PickAvailableReg(&x86state);
+				len = sc_x86Opcode(
+					X86_MOV_R32_RM32,
+					X86_CFG_RMB | X86_CFG_DST_R | X86_CFG_SRC_M,
+					reg,
+					instruction->src,
+					&x86[x86Len]
+				);
+				len += sc_x86Opcode(
+					X86_MOV_RM32_R32,
+					X86_CFG_RMB | X86_CFG_DST_M | X86_CFG_SRC_R,
+					instruction->dst,
+					reg,
+					&x86[x86Len + len]
+				);
+
+				x86Len += len;
+				break;
+			}
+			case SC_ASM_ADD_M32_I32: {
+				len = sc_x86Opcode(
+					X86_ADD_RM32_I32,
+					X86_CFG_RMB | X86_CFG_DST_M | X86_CFG_ID,
+					instruction->dst,
+					instruction->src,
+					&x86[x86Len]
+				);
+
+				x86Len += len;
+				break;
+			}
+
+
 			case SC_ASM_RET_I32: {
 				//if (curFunc->name.hash != hash_main) {
 					len = sc_x86Opcode(
@@ -662,7 +834,7 @@ start:
 				else {
 					len = sc_x86Opcode(
 						X86_MOV_RM32_I32,
-						X86_CFG_RMB | X86_CFG_ID | X86_CFG_DST_R | X86_CFG_64BIT,
+						X86_CFG_RMB | X86_MCFG_ID | X86_CFG_DST_R | X86_CFG_64BIT,
 						RAX,
 						60,
 						&x86[x86Len]
@@ -741,6 +913,77 @@ start:
 
 	si_timeStampPrintSince(ts);
 
+	scAsmType _x86_64StartFunc[] = {
+		SC_ASM_LD_R64_M64, /* mov <param0>, [RSP] */
+		SC_ASM_LEA_R64_M64, /* mov <param1>, [RSP + 4] */
+		SC_ASM_CALL,
+		SC_ASM_POP_R64,
+	};
+
+	scAsmType* _startFunc = _x86_64StartFunc;
+	usize _startFuncLen = countof(_x86_64StartFunc);
+
+	ts = si_timeStampStart();
+
+	for_range (i, 0, _startFuncLen) {
+		switch (_startFunc[i]) {
+			case SC_ASM_LD_R64_M64: {
+				x86Register reg = sc_x86PickFunctionArg(&x86state);
+
+				len = sc_x86OpcodeEx(
+					X86_MOV_R64_RM64,
+					X86_CFG_RMB | X86_CFG_SIB,
+					reg,
+					0,
+					RSP,
+					&x86[x86Len]
+				);
+
+				x86Len += len;
+				break;
+			}
+			case SC_ASM_LEA_R64_M64: {
+				x86Register reg = sc_x86PickFunctionArg(&x86state);
+
+				len = sc_x86OpcodeEx(
+					X86_LEA_R64_RM64,
+					X86_CFG_RMB | X86_CFG_64BIT | X86_CFG_SIB | X86_CFG_SRC_M | X86_CFG_SRC_M_NOT_NEG,
+					reg,
+					4,
+					RSP,
+					&x86[x86Len]
+				);
+
+				x86Len += len;
+				break;
+			}
+			case SC_ASM_CALL: {
+				u32 adr = 0;
+				len = sc_x86OpcodeEx(
+					X86_CALL_REL32,
+					X86_CFG_ID,
+					0,
+					0xFF00FF00,
+					0,
+					&x86[x86Len]
+				);
+
+				x86Len += len;
+				break;
+			}
+
+			default: SI_PANIC();
+		}
+
+		si_print("\t");
+		for_range (j, 0, len) {
+			si_printf("%ll02X ", x86[x86Len - len + j]);
+		}
+		si_print("\n");
+
+	}
+
+	si_timeStampPrintSince(ts);
 #if 0
 	ts = si_timeStampStart();
 

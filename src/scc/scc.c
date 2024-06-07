@@ -133,6 +133,7 @@ void sc_actionEvaluateEx(scAction* action, scAstNode* node, usize i) {
 		else {
 			node->init = init;
 		}
+
 		prevInit = init;
 		init->next = nil;
 
@@ -191,21 +192,26 @@ void sc_actionEvaluateEx(scAction* action, scAstNode* node, usize i) {
 	}
 }
 
-scVariable* sc_getVarAndOptimizeToken(scInfoTable* scope, scTokenStruct* token) {
-	if (token->type == SILEX_TOKEN_IDENTIFIER) {
-		scIdentifierKey* key = si_hashtableGetWithHash(
-			scope->identifiers, token->token.identifier.hash
-		);
-		SI_STOPIF(key->type != SC_IDENTIFIER_KEY_VAR, return nil);
-		scVariable* var = (scVariable*)key->identifier;
+scVariable* sc_getVarAndOptimizeToken(scInfoTable* scope, scTokenStruct* token, i32* res) {
+	SI_STOPIF(token->type != SILEX_TOKEN_IDENTIFIER, *res = 1; goto end);
 
-		if (var->init && var->init->type == SC_INIT_CONSTANT) {
-			token->type = SILEX_TOKEN_CONSTANT;
-			token->token.constant = var->init->value.constant;
-		}
+	scIdentifierKey* key = si_hashtableGetWithHash(
+		scope->identifiers, token->token.identifier.hash
+	);
 
-		return var;
+	SI_STOPIF(key == nil, *res = 2; goto end);
+	SI_STOPIF(key->type != SC_IDENTIFIER_KEY_VAR, *res = 3; goto end);
+
+	scVariable* var = (scVariable*)key->identifier;
+
+	if (var->init && var->init->type == SC_INIT_CONSTANT) {
+		token->type = SILEX_TOKEN_CONSTANT;
+		token->token.constant = var->init->value.constant;
 	}
 
+	*res = 0;
+	return var;
+
+end:
 	return nil;
 }
