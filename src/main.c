@@ -134,12 +134,12 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 	}
 
 
-	scAsm asm = {0};
-	asm.type = SC_ASM_PUSH_R64;
-	si_arrayPush(&instructions, asm);
-
+	scAsm asm;
 	asm.type = SC_ASM_FUNC_START;
 	asm.src = func - global_scope.funcs;
+	si_arrayPush(&instructions, asm);
+
+	asm.type = SC_ASM_PUSH_R64;
 	si_arrayPush(&instructions, asm);
 
 	usize stack = 0;
@@ -913,15 +913,17 @@ start:
 
 	si_timeStampPrintSince(ts);
 
+	usize _startFuncStart = x86Len;
 	scAsmType _x86_64StartFunc[] = {
 		SC_ASM_LD_R64_M64, /* mov <param0>, [RSP] */
 		SC_ASM_LEA_R64_M64, /* mov <param1>, [RSP + 4] */
 		SC_ASM_CALL,
-		SC_ASM_POP_R64,
+		SC_ASM_SYSCALL
 	};
 
 	scAsmType* _startFunc = _x86_64StartFunc;
 	usize _startFuncLen = countof(_x86_64StartFunc);
+	x86state.registers = 0;
 
 	ts = si_timeStampStart();
 
@@ -932,7 +934,7 @@ start:
 
 				len = sc_x86OpcodeEx(
 					X86_MOV_R64_RM64,
-					X86_CFG_RMB | X86_CFG_SIB,
+					X86_CFG_RMB | X86_CFG_64BIT | X86_CFG_SIB,
 					reg,
 					0,
 					RSP,
@@ -958,15 +960,40 @@ start:
 				break;
 			}
 			case SC_ASM_CALL: {
-				u32 adr = 0;
+				scFunction* mainFunc = &global_scope.funcs[global_scope.mainFuncID];
+				i32 adr = mainFunc->location - x86Len;
 				len = sc_x86OpcodeEx(
 					X86_CALL_REL32,
 					X86_CFG_ID,
 					0,
-					0xFF00FF00,
+					adr - sizeof(u8) - sizeof(u32),
 					0,
 					&x86[x86Len]
 				);
+
+				x86Len += len;
+				break;
+			}
+			case SC_ASM_SYSCALL: {
+				len = sc_x86Opcode(
+				   	 X86_MOV_RM32_R32,
+				   	 X86_CFG_RMB | X86_CFG_DST_R | X86_CFG_SRC_R,
+				   	 EDI,
+					 EAX,
+				   	 &x86[x86Len]
+				);
+
+				len += sc_x86Opcode(
+					X86_MOV_RM32_I32,
+					X86_CFG_RMB | X86_CFG_ID | X86_CFG_DST_R | X86_CFG_64BIT,
+					RAX,
+					60,
+					&x86[x86Len + len]
+				);
+
+				x86[x86Len + len + 0] = X86_SYSCALL_H;
+				x86[x86Len + len + 1] = X86_SYSCALL_L;
+				len += 2;
 
 				x86Len += len;
 				break;
@@ -984,7 +1011,7 @@ start:
 	}
 
 	si_timeStampPrintSince(ts);
-#if 0
+
 	ts = si_timeStampStart();
 
 	usize elfSize = sizeof(elf64ElfHeader) + sizeof(elf64ProgramHeader);
@@ -993,7 +1020,7 @@ start:
 	alloc[SC_EXE] = si_allocatorMake(fileLen);
 	u8* buf = si_mallocArray(alloc[SC_EXE], u8, fileLen);
 
-	elf64_elfHeaderMake((elf64ElfHeader*)&buf[0], true, ELFOSABI_NONE, EM_X86_64);
+	elf64_elfHeaderMake((elf64ElfHeader*)&buf[0], true, ELFOSABI_NONE, EM_X86_64, _startFuncStart);
 	elf64_programHeaderMake((elf64ProgramHeader*)&buf[sizeof(elf64ElfHeader)], fileLen);
 	memcpy(&buf[elfSize], x86, x86Len);
 
@@ -1002,7 +1029,6 @@ start:
 	si_fileClose(exe);
 
 	si_timeStampPrintSince(ts);
-#endif
 
 	for_range (i, 0, countof(alloc)) {
 		si_allocatorFree(alloc[i]);

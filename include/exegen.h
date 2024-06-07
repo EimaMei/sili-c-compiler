@@ -162,7 +162,7 @@ typedef struct {
 	u64	p_align;	/* Alignment in memory and file. */
 } elf64ProgramHeader;
 
-void elf64_elfHeaderMake(elf64ElfHeader* header, b32 le, u8 elfOsABI, u16 elfArch) {
+void elf64_elfHeaderMake(elf64ElfHeader* header, b32 le, u8 elfOsABI, u16 elfArch, u32 offset) {
 	char identifier[EI_NIDENT] = {
 		0x7F, 'E', 'L', 'F',
 		ELFCLASS64,
@@ -177,7 +177,7 @@ void elf64_elfHeaderMake(elf64ElfHeader* header, b32 le, u8 elfOsABI, u16 elfArc
 	header->e_type = ET_EXEC;
 	header->e_machine = elfArch;
 	header->e_version = 0x1;
-	header->e_entry = 0x08048000 + sizeof(elf64ElfHeader) + sizeof(elf64ProgramHeader);
+	header->e_entry = 0x08048000 + sizeof(elf64ElfHeader) + sizeof(elf64ProgramHeader) + offset;
 	header->e_phoff = sizeof(elf64ElfHeader);
 	header->e_shoff = 0;
 	header->e_flags = 0;

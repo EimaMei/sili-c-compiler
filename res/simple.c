@@ -1,10 +1,6 @@
 int func(int x);
 
 int main(int argc, char** argv) {
-	/* int x = 22, */
-	int y = argc + 22; /* ,
-		z = 1;*/
-
 	return argc;
 }
 /*
