@@ -148,10 +148,17 @@ typedef SI_ENUM(u32, scAsmType) {
 
 	SC_ASM_POP_R64,
 
+
+
 	SC_ASM_LD_M8_PARAM,
 	SC_ASM_LD_M16_PARAM,
 	SC_ASM_LD_M32_PARAM,
 	SC_ASM_LD_M64_PARAM,
+
+	SC_ASM_LD_R8_I8,
+	SC_ASM_LD_R16_I16,
+	SC_ASM_LD_R32_I32,
+	SC_ASM_LD_R64_I64,
 
 	SC_ASM_LD_R8_M8,
 	SC_ASM_LD_R16_M16,
@@ -169,7 +176,32 @@ typedef SI_ENUM(u32, scAsmType) {
 	SC_ASM_LD_M32_M32,
 	SC_ASM_LD_M64_M32,
 
+
+
 	SC_ASM_ARITH_R64_M64,
+
+
+
+	SC_ASM_ADD_R8_I8,
+	SC_ASM_ADD_R16_I16,
+	SC_ASM_ADD_R32_I32,
+	SC_ASM_ADD_R64_I64,
+
+	SC_ASM_SUB_R8_I8,
+	SC_ASM_SUB_R16_I16,
+	SC_ASM_SUB_R32_I32,
+	SC_ASM_SUB_R64_I64,
+
+
+	SC_ASM_ADD_R8_M8,
+	SC_ASM_ADD_R16_M16,
+	SC_ASM_ADD_R32_M32,
+	SC_ASM_ADD_R64_M64,
+
+	SC_ASM_SUB_R8_M8,
+	SC_ASM_SUB_R16_M16,
+	SC_ASM_SUB_R32_M32,
+	SC_ASM_SUB_R64_M64,
 
 
 	SC_ASM_ADD_M8_I8,
@@ -182,6 +214,7 @@ typedef SI_ENUM(u32, scAsmType) {
 	SC_ASM_SUB_M32_I32,
 	SC_ASM_SUB_M64_I64,
 
+
 	SC_ASM_ADD_M8_M8,
 	SC_ASM_ADD_M16_M16,
 	SC_ASM_ADD_M32_M32,
@@ -193,8 +226,13 @@ typedef SI_ENUM(u32, scAsmType) {
 	SC_ASM_SUB_M64_M64,
 
 
+
 	SC_ASM_CALL,
 
+	SC_ASM_RET_R8,
+	SC_ASM_RET_R16,
+	SC_ASM_RET_R32,
+	SC_ASM_RET_R64,
 
 	SC_ASM_RET_I8,
 	SC_ASM_RET_I16,
@@ -253,9 +291,18 @@ extern scType type_double;
 		SI_ASSERT(bytes <= limit); \
 	} while (0)
 
+#define SC_RETURN_REGISTER 0
 
 #define sc_typeCmp(t1, t2) ((t1)->size == (t2)->size && SI_TO_U64((isize*)(t1) + 1) == SI_TO_U64((isize*)(t2) + 1))
 #define sc_typeIsVoid(type) ((type)->size == 0)
+
+#define sc_variableErrorCheck(error) \
+	do { \
+		if (error > 1) { \
+			cstring errors[] = {"Variable doesn't exist", "Cannot use type/function as a valid initializer."}; \
+			SI_PANIC_MSG(errors[error == 3]); \
+		} \
+	} while (0)
 
 
 #define SI_LOG(msg) si_print(msg)
@@ -271,13 +318,14 @@ void sc_initializerConstantCalc(scInitializer* init, scOperator operator, scToke
 
 scPunctuator sc_actionAddValues(scLexer* lex, scAction* action);
 
-#define sc_actionEvaluate(action, node) \
-	sc_actionEvaluateEx(action, node, 0)
-
+/* */
+#define sc_actionEvaluate(action, node) sc_actionEvaluateEx(action, node, 0)
 void sc_actionEvaluateEx(scAction* action, scAstNode* node, usize i);
 
-scVariable* sc_getVarAndOptimizeToken(scInfoTable* scope, scTokenStruct* token, i32* res);
-
+/* */
+scVariable* sc_variableGet(scInfoTable* scope, u64 hash, i32* res);
+/* */
+scVariable* sc_variableGetAndOptimizeToken(scInfoTable* scope, scTokenStruct* token, i32* res);
 
 
 #endif /* SC_SCC_INCLUDE_H */

@@ -13,21 +13,24 @@
 
 usize sizeof_SIZE_T = 8;
 
-scType type_char = (scType){1, SC_TYPE_INT, 0, nil};
-scType type_short = (scType){2, SC_TYPE_INT, 0, nil};
-scType type_int = (scType){4, SC_TYPE_INT, 0, nil};
-scType type_long = (scType){8, SC_TYPE_INT, 0, nil};
+scType type_char     = (scType){1, SC_TYPE_INT, 0, nil};
+scType type_short    = (scType){2, SC_TYPE_INT, 0, nil};
+scType type_int      = (scType){4, SC_TYPE_INT, 0, nil};
+scType type_long     = (scType){8, SC_TYPE_INT, 0, nil};
 scType type_unsigned = (scType){4, SC_TYPE_INT | SC_TYPE_UNSIGNED, 0, nil};
-scType type_float = (scType){4, SC_TYPE_FLOAT, 0, nil};
-scType type_double = (scType){8, SC_TYPE_FLOAT, 0, nil};
+scType type_float    = (scType){4, SC_TYPE_FLOAT, 0, nil};
+scType type_double   = (scType){8, SC_TYPE_FLOAT, 0, nil};
 
 siAllocator* alloc[SC_ALLOC_LEN];
 
-#define SC_MAX_FUNCS 128
 
-#define SC_MAX_VARS 128
-#define SC_MAX_ACTIONS 128
-#define SC_MAX_INITIALIZERS 32
+#define SC_MAX_MACROS 512
+#define SC_MAX_TYPES  512
+#define SC_MAX_FUNCS  512
+#define SC_MAX_VARS   512
+
+#define SC_MAX_ACTIONS 512
+#define SC_MAX_INITIALIZERS 64
 
 
 scAsmType sc_asmGetCorrectType(scAsmType baseType, u32 typeSize) {
@@ -67,6 +70,116 @@ void x86_OP_M32_M32_EX(x86EnvironmentState* x86, scAsm* instruction, u8 opcode, 
 		x86, opcode, instruction->dst, reg,
 		X86_CFG_RMB | X86_CFG_DST_M | X86_CFG_SRC_R | bits
 	);
+}
+
+#if 0
+switch (node->type) {
+	case SC_AST_VAR_MAKE: {
+							  scVariable* var = (scVariable*)node->key->identifier;
+							  scInitializer* inits = node->init;
+
+							  scInitializer* init = inits;
+							  stack = si_alignCeilEx(stack + var->type.size, var->type.size);
+							  var->location = stack;
+#endif
+void sc_astNodeToAsm(scInfoTable* scope, scAsm* instructions, scAsmType asmTypes[3],
+		b32 useRegForBinary, u32 typeSize, scInitializer* initializer, u32 dst, u32 src) {
+	scAsm asm;
+	scInitializer* init = initializer;
+
+start:
+	switch (init->type) {
+		case SC_INIT_CONSTANT: {
+			scConstant constant = init->value.constant;
+
+			/* TODO(EimaMei): SC_ASM_LD_M64_I64. */
+			asm.type = sc_asmGetCorrectType(asmTypes[0], typeSize);
+			asm.dst = dst;
+			asm.src = constant.value.integer;
+
+			si_arrayPush(&instructions, asm);
+			break;
+		}
+		case SC_INIT_IDENTIFIER: {
+			u64 hash = init->value.identifier.hash;
+			scIdentifierKey* key = si_hashtableGetWithHash(scope->identifiers, hash);
+			SI_ASSERT(key->type != SC_IDENTIFIER_KEY_FUNC);
+
+			scVariable* var = (scVariable*)key->identifier;
+
+			asm.type = sc_asmGetCorrectType(asmTypes[1], var->type.size);
+			asm.dst = dst;
+			asm.src = var->location;
+
+			si_arrayPush(&instructions, asm);
+			break;
+		}
+		case SC_INIT_BINARY: {
+			scTokenStruct* left = init->value.binary.left,
+						  *right = init->value.binary.right;
+			scOperator operator = init->value.binary.operator;
+
+			scTokenStruct* arguments[2] = {left, right};
+
+			scAsmType typesLD[2];
+			scAsmType typesOP[2];
+			if (!useRegForBinary) {
+				typesLD[0] = SC_ASM_LD_M8_M8;
+				typesLD[1] = SC_ASM_LD_M8_I8;
+				typesOP[0] = sc_asmGetCorrectOperator(SC_ASM_ADD_M8_M8, operator);
+				typesOP[1] = sc_asmGetCorrectOperator(SC_ASM_ADD_M8_I8, operator);
+			}
+			else {
+				typesLD[0] = SC_ASM_LD_R8_M8;
+				typesLD[1] = SC_ASM_LD_R8_I8;
+				typesOP[0] = sc_asmGetCorrectOperator(SC_ASM_ADD_R8_M8, operator);
+				typesOP[1] = sc_asmGetCorrectOperator(SC_ASM_ADD_R8_I8, operator);
+			}
+
+			scAsmType* types[2] = {typesLD, typesOP};
+			for_range (j, 0, countof(arguments)) {
+				scTokenStruct* arg = arguments[j];
+
+				switch (arg->type) {
+					case SILEX_TOKEN_IDENTIFIER: {
+						u64 hash = arg->token.identifier.hash;
+						scIdentifierKey* key = si_hashtableGetWithHash(scope->identifiers, hash);
+						SI_ASSERT(key->type != SC_IDENTIFIER_KEY_FUNC);
+
+						scVariable* var = (scVariable*)key->identifier;
+						asm.type = sc_asmGetCorrectType(types[j][0], var->type.size);
+						asm.dst = dst;
+						asm.src = var->location;
+
+						break;
+					}
+					case SILEX_TOKEN_CONSTANT: {
+						scConstant constant = arg->token.constant;
+
+						asm.type = sc_asmGetCorrectType(types[j][1], typeSize);
+						asm.dst = dst;
+						asm.src = constant.value.integer;
+
+						break;
+					}
+				}
+				si_arrayPush(&instructions, asm);
+			}
+
+			break;
+		}
+	}
+
+	init = init->next;
+	SI_STOPIF(init != nil, goto start);
+
+
+	if (useRegForBinary) {
+		asm.type = sc_asmGetCorrectType(asmTypes[2], typeSize);
+		asm.dst = dst;
+		asm.src = src;
+		si_arrayPush(&instructions, asm);
+	}
 }
 
 
@@ -132,18 +245,10 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 					}
 
 					i32 err1, err2;
-					scVariable* leftVar = sc_getVarAndOptimizeToken(scope, left, &err1);
-					scVariable* rightVar = sc_getVarAndOptimizeToken(scope, right, &err2);
-
-
-					if (err1 > 1) {
-						cstring errors[] = {"Variable doesn't exist", "Cannot use type/function as a valid initializer."};
-						SI_PANIC_MSG(errors[err2 == 3]);
-					}
-					if (err2 > 1) {
-						cstring errors[] = {"Variable doesn't exist", "Cannot use type/function as a valid initializer."};
-						SI_PANIC_MSG(errors[err2 == 3]);
-					}
+					scVariable* leftVar = sc_variableGetAndOptimizeToken(scope, left, &err1);
+					scVariable* rightVar = sc_variableGetAndOptimizeToken(scope, right, &err2);
+					sc_variableErrorCheck(err1);
+					sc_variableErrorCheck(err2);
 
 					if (left->type == SILEX_TOKEN_CONSTANT && left->type == right->type) {
 						scOperator op = init->value.binary.operator;
@@ -156,9 +261,10 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 					break;
 				}
 				case SC_INIT_IDENTIFIER: {
-					scString identifier = init->value.identifier;
-					scIdentifierKey* key = si_hashtableGetWithHash(scope->identifiers, identifier.hash);
-					scVariable* var = (scVariable*)key->identifier;
+					u64 hash = init->value.identifier.hash;
+					i32 err;
+					scVariable* var = sc_variableGet(scope, hash, &err);
+					sc_variableErrorCheck(err);
 
 					if (var->init && var->init->type == SC_INIT_CONSTANT) {
 						init->type = SC_INIT_CONSTANT;
@@ -205,134 +311,34 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 
 	for_range (i, 0, si_arrayLen(ast)) {
 		scAstNode* node = &ast[i];
-		b32 skipPush = false;
 
 		switch (node->type) {
 			case SC_AST_VAR_MAKE: {
 				scVariable* var = (scVariable*)node->key->identifier;
-				scInitializer* inits = node->init;
-
-				scInitializer* init = inits;
 				stack = si_alignCeilEx(stack + var->type.size, var->type.size);
 				var->location = stack;
 
-				while (init != nil) {
-					switch (init->type) {
-						case SC_INIT_CONSTANT: {
-							scConstant constant = init->value.constant;
-
-							/* TODO(EimaMei): SC_ASM_LD_M64_I64. */
-							asm.type = sc_asmGetCorrectType(SC_ASM_LD_M8_I8, var->type.size);
-							asm.dst = stack;
-							asm.src = constant.value.integer;
-							break;
-						}
-						case SC_INIT_IDENTIFIER: {
-							u64 hash = init->value.identifier.hash;
-							scIdentifierKey* key = si_hashtableGetWithHash(scope->identifiers, hash);
-							SI_ASSERT(key->type != SC_IDENTIFIER_KEY_FUNC);
-
-							scVariable* var = (scVariable*)key->identifier;
-
-							asm.type = sc_asmGetCorrectType(SC_ASM_LD_M8_M8, var->type.size);
-							asm.dst = stack;
-							asm.src = var->location;
-							break;
-						}
-						case SC_INIT_BINARY: {
-							scTokenStruct* left = init->value.binary.left,
-										  *right = init->value.binary.right;
-							scOperator operator = init->value.binary.operator;
-
-							scTokenStruct* arguments[2] = {left, right};
-
-							scAsmType typesLD[2] = {SC_ASM_LD_M8_M8, SC_ASM_LD_M8_I8};
-							scAsmType typesOP[2] = {
-								sc_asmGetCorrectOperator(SC_ASM_ADD_M8_M8, operator),
-								sc_asmGetCorrectOperator(SC_ASM_ADD_M8_I8, operator)
-							};
-							scAsmType* types[2] = {typesLD, typesOP};
-
-							for_range (j, 0, countof(arguments)) {
-								scTokenStruct* arg = arguments[j];
-
-								switch (arg->type) {
-									case SILEX_TOKEN_IDENTIFIER: {
-										u64 hash = arg->token.identifier.hash;
-										scIdentifierKey* key = si_hashtableGetWithHash(scope->identifiers, hash);
-										SI_ASSERT(key->type != SC_IDENTIFIER_KEY_FUNC);
-
-										scVariable* var = (scVariable*)key->identifier;
-										asm.type = sc_asmGetCorrectType(types[j][0], var->type.size);
-										asm.dst = stack;
-										asm.src = var->location;
-
-										si_arrayPush(&instructions, asm);
-
-										break;
-									}
-									case SILEX_TOKEN_CONSTANT: {
-										scConstant constant = arg->token.constant;
-
-										asm.type = sc_asmGetCorrectType(types[j][1], var->type.size);
-										asm.dst = stack;
-										asm.src = constant.value.integer;
-
-										si_arrayPush(&instructions, asm);
-										break;
-									}
-								}
-							}
-							skipPush = true;
-							break;
-						}
-						default: SI_PANIC();
-					}
-					init = init->next;
-				}
-
+				sc_astNodeToAsm(
+					scope, instructions,
+					si_buf(u32, SC_ASM_LD_M8_I8, SC_ASM_LD_M8_M8), false,
+					var->type.size, node->init,
+					var->location, 0
+				);
 				break;
 			}
 			case SC_AST_RETURN: {
-				scInitializer* inits = node->init;
-
-				scInitializer* init = inits;
-				while (init != nil) {
-					switch (init->type) {
-						case SC_INIT_CONSTANT: {
-							scConstant constant = init->value.constant;
-							asm.type = sc_asmGetCorrectType(SC_ASM_RET_I8, func->type.size);
-							/* asm.dst = 0; */
-							asm.src = constant.value.integer;
-
-							break;
-						}
-						case SC_INIT_IDENTIFIER: {
-							u64 hash = init->value.identifier.hash;
-							scIdentifierKey* key = si_hashtableGetWithHash(scope->identifiers, hash);
-							scVariable* var = (scVariable*)key->identifier;
-
-							asm.type = sc_asmGetCorrectType(SC_ASM_RET_M8, func->type.size);
-							/* asm.dst = 0; */
-							asm.src = var->location;
-							
-							break;
-						}
-						default: SI_PANIC();
-					}
-					init = init->next;
-				}
-
+				sc_astNodeToAsm(
+					scope, instructions,
+					si_buf(u32, SC_ASM_RET_I8, SC_ASM_RET_M8, SC_ASM_RET_R8), true,
+					func->type.size, node->init,
+					SC_RETURN_REGISTER, 0
+				);
 				break;
 			}
 
-			default: SI_PANIC();
-		}
-
-		if (!skipPush) {
-			si_arrayPush(&instructions, asm);
 		}
 	}
+	SI_LOG("== Parse complete  ==\n");
 }
 
 
@@ -356,6 +362,7 @@ void sc_functionValidateMain(scFunction* func) {
 
 scGlobalInfoTable global_scope;
 u64 hash_main;
+
 
 int main(void) {
 #if 0
@@ -396,23 +403,28 @@ int main(void) {
 #if 1
 	SC_ALLOCATOR_MAKE(
 		SC_MAIN,
-		SI_MEGA(2),
+		SI_MEGA(1),
 		(3 * sizeof(siArrayHeader) + sizeof(siHashEntry) * SC_MAX_VARS) +
-		(sizeof(scFunction)) * SC_MAX_FUNCS +
-		(sizeof(scVariable)) * SC_MAX_VARS +
+
+		sizeof(scIdentifierKey) * (SC_MAX_VARS + SC_MAX_TYPES + SC_MAX_TYPES + SC_MAX_MACROS) +
+		sizeof(scFunction) * SC_MAX_FUNCS +
+		sizeof(scVariable) * SC_MAX_VARS +
+		sizeof(scType) * SC_MAX_TYPES +
+		sizeof(scVariable) * SC_MAX_MACROS +
+
 		sizeof(scAction) * SC_MAX_ACTIONS +
 		sizeof(scTokenStruct) * SC_MAX_INITIALIZERS * SC_MAX_ACTIONS
 	);
 	SC_ALLOCATOR_MAKE(
 		SC_AST,
-		SI_MEGA(1),
+		USIZE_MAX,
 		(sizeof(scAstNode) + sizeof(siArrayHeader) + sizeof(scInitializer) * SC_MAX_INITIALIZERS) * SC_MAX_ACTIONS
 	);
 
 	SC_ALLOCATOR_MAKE(
 		SC_ASM,
-		SI_MEGA(3),
-		SI_MEGA(3)
+		sizeof(siArrayHeader) + SC_MAX_INITIALIZERS * SC_MAX_ACTIONS * sizeof(scAsm),
+		sizeof(siArrayHeader) + SC_MAX_INITIALIZERS * SC_MAX_ACTIONS * sizeof(scAsm)
 	);
 
 	SC_ALLOCATOR_MAKE(
@@ -420,11 +432,11 @@ int main(void) {
 		SI_KILO(1),
 		SI_KILO(1)
 	);
-	siArray(scAsm) asm = si_arrayMakeReserve(alloc[SC_ASM], sizeof(scAsm), (SI_MEGA(3) / sizeof(scAsm)) - 2 * sizeof(scAsm));
+	siArray(scAsm) asm = si_arrayMakeReserve(alloc[SC_ASM], sizeof(scAsm), SC_MAX_INITIALIZERS * SC_MAX_ACTIONS);
 
 	global_scope.parent = nil;
 	global_scope.identifiers = si_hashtableMakeReserve(
-		alloc[SC_MAIN], SC_MAX_VARS + SC_MAX_FUNCS
+		alloc[SC_MAIN], SC_MAX_VARS + SC_MAX_FUNCS + SC_MAX_MACROS + SC_MAX_TYPES
 	);
 
 	global_scope.scopeRank = 0;
@@ -433,16 +445,20 @@ int main(void) {
 	global_scope.varsLen = 0;
 	global_scope.vars = si_malloc(
 		alloc[SC_MAIN],
-		sizeof(scIdentifierKeyType) * SC_MAX_VARS +
+		sizeof(scIdentifierKey) * SC_MAX_VARS +
 		sizeof(scVariable) * SC_MAX_VARS
 	);
 	global_scope.typesLen = 0;
-	global_scope.types = nil;
+	global_scope.types = si_malloc(
+		alloc[SC_MAIN],
+		sizeof(scIdentifierKey) * SC_MAX_TYPES +
+		sizeof(scType) * SC_MAX_TYPES
+	);
 
 	global_scope.funcsLen = 0;
 	global_scope.funcs = si_malloc(
 		alloc[SC_MAIN],
-		sizeof(scIdentifierKeyType) * SC_MAX_FUNCS +
+		sizeof(scIdentifierKey) * SC_MAX_FUNCS +
 		sizeof(scFunction) * SC_MAX_FUNCS
 	);
 
@@ -761,7 +777,7 @@ start:
 				sc_x86OpcodePush(&x86, X86_PUSH_R64 + RBP);
 
 				sc_x86Opcode(
-					&x86, X86_MOV_RM64_R64, RBP, RSP,
+					&x86, X86_MOV_RM32_R32, RBP, RSP,
 					X86_CFG_REX_PREFIX | X86_CFG_RMB | X86_CFG_64BIT | X86_CFG_DST_R | X86_CFG_SRC_R
 				);
 				break;
@@ -779,8 +795,25 @@ start:
 			case SC_ASM_LD_M64_PARAM: {
 				x86Register reg = sc_x86PickFunctionArg(&x86);
 				sc_x86Opcode(
-					&x86, X86_MOV_RM64_R64, instruction->dst, reg,
+					&x86, X86_MOV_RM32_R32, instruction->dst, reg,
 					X86_CFG_RMB | X86_CFG_64BIT | X86_CFG_DST_M | X86_CFG_SRC_R
+				);
+				break;
+			}
+
+			case SC_ASM_LD_R32_I32: {
+				sc_x86Opcode(
+					&x86, X86_MOV_RM32_I32, instruction->dst, instruction->src,
+					X86_CFG_RMB | X86_CFG_ID | X86_CFG_DST_R
+				);
+				break;
+			}
+
+			case SC_ASM_LD_R32_M32: {
+				x86Register reg = sc_x86RegisterConvert(&x86, instruction->dst);
+				sc_x86Opcode(
+					&x86, X86_MOV_R32_RM32, reg, instruction->src,
+					X86_CFG_RMB | X86_CFG_DST_R | X86_CFG_SRC_M
 				);
 				break;
 			}
@@ -795,6 +828,44 @@ start:
 			case SC_ASM_LD_M32_M32:
 				x86_OP_M32_M32(&x86, instruction, X86_MOV_RM32_R32);
 				break;
+
+			case SC_ASM_ADD_R32_I32: {
+				x86Register reg = sc_x86RegisterConvert(&x86, instruction->dst);
+				sc_x86Opcode(
+					&x86, X86_ADD_RM32_I32, reg, instruction->src,
+					X86_CFG_RMB | X86_CFG_DST_R | X86_CFG_ID | X86_CFG_ADD
+				);
+				break;
+			}
+
+			case SC_ASM_SUB_R32_I32: {
+				x86Register reg = sc_x86RegisterConvert(&x86, instruction->dst);
+				sc_x86Opcode(
+					&x86, X86_SUB_RM32_I32, reg, instruction->src,
+					X86_CFG_RMB | X86_CFG_DST_R | X86_CFG_ID | X86_CFG_SUB
+				);
+				break;
+			}
+
+			case SC_ASM_ADD_R32_M32: {
+				x86Register reg = sc_x86RegisterConvert(&x86, instruction->dst);
+				sc_x86Opcode(
+					&x86, X86_ADD_R32_RM32, reg, instruction->src,
+					X86_CFG_RMB | X86_CFG_DST_R | X86_CFG_SRC_M
+				);
+				break;
+			}
+
+			case SC_ASM_SUB_R32_M32: {
+				x86Register reg = sc_x86RegisterConvert(&x86, instruction->dst);
+				sc_x86Opcode(
+					&x86, X86_SUB_R32_RM32, reg, instruction->src,
+					X86_CFG_RMB | X86_CFG_DST_R | X86_CFG_SRC_M
+				);
+				break;
+			}
+
+
 
 			case SC_ASM_ADD_M32_I32: {
 				sc_x86Opcode(
@@ -819,9 +890,24 @@ start:
 				break;
 
 
+			case SC_ASM_RET_R32: {
+				x86Register reg = sc_x86RegisterConvert(&x86, instruction->dst);
+
+				if (reg != RAX) {
+					sc_x86Opcode(
+						&x86, X86_MOV_R32_I32, RAX, reg,
+						X86_CFG_ID | X86_CFG_DST_R
+					);
+				}
+				sc_x86OpcodePush(&x86, X86_POP_R64 + RBP);
+				sc_x86OpcodePush(&x86, X86_RET);
+
+				break;
+			}
+
 			case SC_ASM_RET_I32: {
 				sc_x86Opcode(
-					&x86, X86_MOV_R32_I32, RAX, instruction->src,
+					&x86, X86_MOV_R32_I32, RAX, instruction->dst,
 					X86_CFG_ID | X86_CFG_DST_R
 				);
 				sc_x86OpcodePush(&x86, X86_POP_R64 + RBP);
@@ -832,7 +918,7 @@ start:
 
 			case SC_ASM_RET_M32: {
 				sc_x86Opcode(
-					&x86, X86_MOV_R32_RM32, RAX, instruction->src,
+					&x86, X86_MOV_R32_RM32, RAX, instruction->dst,
 					X86_CFG_RMB | X86_CFG_DST_R | X86_CFG_SRC_M
 				);
 				sc_x86OpcodePush(&x86, X86_POP_R64 + RBP);
@@ -865,7 +951,7 @@ start:
 			case SC_ASM_LD_R64_M64: {
 				x86Register reg = sc_x86PickFunctionArg(&x86);
 				sc_x86OpcodeEx(
-					&x86, X86_MOV_R64_RM64, reg, 0, RSP,
+					&x86, X86_MOV_R32_RM32, reg, 0, RSP,
 					X86_CFG_RMB | X86_CFG_64BIT | X86_CFG_SIB
 				);
 
@@ -874,7 +960,7 @@ start:
 			case SC_ASM_ARITH_R64_M64: {
 				x86Register reg = sc_x86PickFunctionArg(&x86);
 				sc_x86OpcodeEx(
-					&x86, X86_LEA_R64_RM64, reg, 4, RSP,
+					&x86, X86_LEA_R32_RM32, reg, 4, RSP,
 					X86_CFG_RMB | X86_CFG_64BIT | X86_CFG_SIB | X86_CFG_SRC_M | X86_CFG_SRC_M_NOT_NEG
 				);
 

@@ -147,9 +147,9 @@ extern "C" {
 	#include <TargetConditionals.h>
 
 	#if TARGET_IPHONE_SIMULATOR == 1
-		#define SI_PLATFORM_IOS 1
+		#define SI_SYSTEM_IOS 1
 	#elif TARGET_OS_IPHONE == 1
-		#define SI_PLATFORM_IOS 1
+		#define SI_SYSTEM_IOS 1
 	#elif TARGET_OS_MAC
 		#define SI_SYSTEM_OSX 1
 	#endif

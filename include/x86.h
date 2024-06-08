@@ -54,28 +54,25 @@ typedef struct {
 #define X86_POP_R64 0x58
 
 #define X86_ADD_RM32_R32 0x01
-#define X86_ADD_RM64_R64 X86_ADD_RM32_R32
+
+#define X86_ADD_R32_RM32 0x03
 
 #define X86_ADD_RM32_I32 0x81
-#define X86_ADD_RM64_I32 X86_ADD_RM32_I32
 
 
 #define X86_SUB_RM32_R32 0x29
-#define X86_SUB_RM64_R64 X86_SUB_RM32_R32
+
+#define X86_SUB_R32_RM32 0x2B
 
 #define X86_SUB_RM32_I32 0x81
-#define X86_SUB_RM64_I32 X86_SUB_RM32_I32
 
 
 
 #define X86_MOV_RM32_R32 0x89
-#define X86_MOV_RM64_R64 X86_MOV_RM32_R32
 
 #define X86_MOV_R32_RM32 0x8B
-#define X86_MOV_R64_RM64 X86_MOV_R32_RM32
 
 #define X86_LEA_R32_RM32 0x8D
-#define X86_LEA_R64_RM64 X86_LEA_R32_RM32
 
 #define X86_MOV_R32_I32 0xB8
 #define X86_MOV_RM32_I32 0xC7
@@ -185,10 +182,10 @@ void sc_x86OpcodeEx(x86EnvironmentState* state, u8 opcode, u32 dst, u32 src, u8 
 		if (config & X86_CFG_MUL_OP_BITS) {
 			switch (config & X86_CFG_MUL_OP_BITS) {
 				case X86_CFG_ADD:
-					reg = 0b000;
+					reg = 0;
 					break;
 				case X86_CFG_SUB:
-					reg = 0b101;
+					reg = 5;
 					break;
 				default: SI_PANIC();
 			}
@@ -281,6 +278,18 @@ x86Register sc_x86PickFunctionArg(x86EnvironmentState* state) {
 	}
 }
 
+x86Register sc_x86RegisterConvert(x86EnvironmentState* x86, i32 reg) {
+	switch (x86->conv) {
+		case X86_CALLING_CONV_SYSTEM_V_X86: {
+			SI_STOPIF(reg == SC_RETURN_REGISTER, return RAX);
+			break;
+		}
+		default: SI_PANIC();
+	}
+
+	return reg;
+}
+
 x86Register sc_x86PickAvailableReg(x86EnvironmentState* state) {
 	switch (state->conv) {
 		case X86_CALLING_CONV_SYSTEM_V_X86: {
@@ -291,6 +300,7 @@ x86Register sc_x86PickAvailableReg(x86EnvironmentState* state) {
 					return i;
 				}
 			}
+			break;
 		}
 		default: SI_PANIC();
 	}
