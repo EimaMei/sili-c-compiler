@@ -145,35 +145,66 @@ typedef SI_ENUM(u32, scAsmType) {
 	SC_ASM_FUNC_START = 1,
 
 	SC_ASM_PUSH_R64,
+
 	SC_ASM_POP_R64,
 
+	SC_ASM_LD_M8_PARAM,
+	SC_ASM_LD_M16_PARAM,
+	SC_ASM_LD_M32_PARAM,
+	SC_ASM_LD_M64_PARAM,
 
-	SC_ASM_LD_M8_FUNC_PARAM,
-	SC_ASM_LD_M16_FUNC_PARAM,
-	SC_ASM_LD_M32_FUNC_PARAM,
-	SC_ASM_LD_M64_FUNC_PARAM,
-
-	SC_ASM_LD_R64_M64,
-	SC_ASM_LEA_R64_M64,
-
+	SC_ASM_LD_R8_M8,
+	SC_ASM_LD_R16_M16,
 	SC_ASM_LD_R32_M32,
+	SC_ASM_LD_R64_M64,
+
 	SC_ASM_LD_M8_I8,
 	SC_ASM_LD_M16_I16,
 	SC_ASM_LD_M32_I32,
 	SC_ASM_LD_M64_I32,
 	SC_ASM_LD_M64_I64,
 
+	SC_ASM_LD_M8_M8,
+	SC_ASM_LD_M16_M16,
 	SC_ASM_LD_M32_M32,
+	SC_ASM_LD_M64_M32,
+
+	SC_ASM_ARITH_R64_M64,
 
 
+	SC_ASM_ADD_M8_I8,
+	SC_ASM_ADD_M16_I16,
 	SC_ASM_ADD_M32_I32,
+	SC_ASM_ADD_M64_I64,
+
+	SC_ASM_SUB_M8_I8,
+	SC_ASM_SUB_M16_I16,
+	SC_ASM_SUB_M32_I32,
+	SC_ASM_SUB_M64_I64,
+
+	SC_ASM_ADD_M8_M8,
+	SC_ASM_ADD_M16_M16,
+	SC_ASM_ADD_M32_M32,
+	SC_ASM_ADD_M64_M64,
+
+	SC_ASM_SUB_M8_M8,
+	SC_ASM_SUB_M16_M16,
+	SC_ASM_SUB_M32_M32,
+	SC_ASM_SUB_M64_M64,
 
 
 	SC_ASM_CALL,
 
 
+	SC_ASM_RET_I8,
+	SC_ASM_RET_I16,
 	SC_ASM_RET_I32,
+	SC_ASM_RET_I64,
+
+	SC_ASM_RET_M8,
+	SC_ASM_RET_M16,
 	SC_ASM_RET_M32,
+	SC_ASM_RET_M64,
 
 
 	SC_ASM_SYSCALL,
@@ -226,6 +257,12 @@ extern scType type_double;
 #define sc_typeCmp(t1, t2) ((t1)->size == (t2)->size && SI_TO_U64((isize*)(t1) + 1) == SI_TO_U64((isize*)(t2) + 1))
 #define sc_typeIsVoid(type) ((type)->size == 0)
 
+
+#define SI_LOG(msg) si_print(msg)
+#define SI_LOG_FMT(msg, ...) si_printf(msg, __VA_ARGS__)
+
+
+
 scType* sc_typeGetFromKeyword(scKeyword keyword);
 
 scType sc_typeGet(scLexer* lex);
@@ -240,5 +277,7 @@ scPunctuator sc_actionAddValues(scLexer* lex, scAction* action);
 void sc_actionEvaluateEx(scAction* action, scAstNode* node, usize i);
 
 scVariable* sc_getVarAndOptimizeToken(scInfoTable* scope, scTokenStruct* token, i32* res);
+
+
 
 #endif /* SC_SCC_INCLUDE_H */

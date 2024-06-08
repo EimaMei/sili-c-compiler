@@ -36,22 +36,15 @@ all: $(OUTPUT) $(EXE) run
 
 # Run the exe.
 run: $(EXE)
-ifeq ($(MAC_GEN_APP), true)
-	make generateApp
-	open $(OUTPUT)/$(NAME).app
-else
 	./$(EXE)
-endif
-
+	@chmod a+x a.out
+	@-./a.out
 # Clean the 'build' folder.
 clean:
 	rm $(OUTPUT)/**
 
 $(EXE): $(DEPS-OBJ) $(SRC-OBJ)
 	$(CC) $(FLAGS) $^ $(LIBS) -o $@
-ifeq ($(OS),MAC)
-#make generateApp
-endif
 
 $(OUTPUT)/%.o: $(SRC-DIR)/%.c
 	$(CC) $(FLAGS) $(INCLUDE) -c $^ -o $(OUTPUT)/$(notdir $@)
