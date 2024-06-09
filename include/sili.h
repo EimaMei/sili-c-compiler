@@ -5005,10 +5005,10 @@ siHashTable si_hashtableMake(siAllocator* alloc, const rawptr* keyArray, usize k
 SIDEF
 siHashTable si_hashtableMakeReserve(siAllocator* alloc, usize capacity) {
 	SI_ASSERT(capacity != 0);
-	/* NOTE(EimaMei): A power of 2 length is enforced so that truncating a hash
+	/* NOTE(EimaMei): A power of 2 capacity is enforced so that truncating a hash
 	 * into a valid index would only require a 'hash & (capacity - 1)', which
 	 * basically takes no time in comparison to the usual modulo operator. */
-	SI_ASSERT((capacity & (capacity - 1)) == 0);
+	SI_ASSERT_MSG((capacity & (capacity - 1)) == 0, "The specified capacity must be a power of 2 number (8, 64, 512, 1024, etc).");
 
 	siHashTable table = si_arrayMakeReserve(alloc, sizeof(siHashEntry), capacity);
 	siHashEntry entry;

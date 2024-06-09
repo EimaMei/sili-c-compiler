@@ -7,9 +7,6 @@
 #include <x86.h>
 #include <exegen.h>
 
-/* Source */
-#include <scc/scc.c>
-
 
 usize sizeof_SIZE_T = 8;
 
@@ -216,13 +213,15 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 	}
 	SI_LOG("== scAction -> scAst complete  ==\n");
 
+	scInitializer* prevInit;
+	scTokenStruct* prevTokenStruct;
 
 	for_range (i, 0, si_arrayLen(ast)) {
 		scAstNode* node = &ast[i];
-		scInitializer* prevInit = nil;
+		prevInit = nil;
 
-		scInitializer* inits = node->init;
-		scInitializer* init = inits;
+		scInitializer* start = node->init;
+		scInitializer* init = start;
 
 		while (init != nil) {
 			switch (init->type) {
@@ -230,13 +229,21 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 					scTokenStruct* left = init->value.binary.left,
 								  *right = init->value.binary.right;
 
+					si_printf("%i %i\n", left->type, right->type);
 					if (left == nil) {
 						switch (prevInit->type) {
 							case SC_INIT_CONSTANT: {
-								sc_initializerConstantCalc(
-									prevInit, init->value.binary.operator, right
-								);
-								prevInit->next = init->next;
+								scConstant constant = prevInit->value.constant;
+								left = init->value.binary.left = prevTokenStruct;
+								left->type = SC_INIT_CONSTANT;
+								left->token.constant = constant;
+
+								if (start == prevInit) {
+									node->init = init;
+								}
+								else SI_PANIC();
+
+								//init = prevInit;
 
 								break;
 							}
@@ -251,11 +258,13 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 					sc_variableErrorCheck(err2);
 
 					if (left->type == SILEX_TOKEN_CONSTANT && left->type == right->type) {
+						prevTokenStruct = init->value.binary.left;
+						prevInit = init;
+
 						scOperator op = init->value.binary.operator;
 						init->value.constant = left->token.constant;
 
 						sc_initializerConstantCalc(init, op, right);
-						prevInit = init;
 					}
 
 					break;
@@ -329,13 +338,13 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 			case SC_AST_RETURN: {
 				sc_astNodeToAsm(
 					scope, instructions,
-					si_buf(u32, SC_ASM_RET_I8, SC_ASM_RET_M8, SC_ASM_RET_R8), true,
+					si_buf(u32, SC_ASM_RET_I8, SC_ASM_RET_M8, SC_ASM_RET_R8), node->init->type == SC_INIT_BINARY,
 					func->type.size, node->init,
-					SC_RETURN_REGISTER, 0
+					0, SC_RETURN_REGISTER
 				);
 				break;
 			}
-
+			default: SI_PANIC();
 		}
 	}
 	SI_LOG("== Parse complete  ==\n");
@@ -891,7 +900,7 @@ start:
 
 
 			case SC_ASM_RET_R32: {
-				x86Register reg = sc_x86RegisterConvert(&x86, instruction->dst);
+				x86Register reg = sc_x86RegisterConvert(&x86, instruction->src);
 
 				if (reg != RAX) {
 					sc_x86Opcode(
@@ -907,7 +916,7 @@ start:
 
 			case SC_ASM_RET_I32: {
 				sc_x86Opcode(
-					&x86, X86_MOV_R32_I32, RAX, instruction->dst,
+					&x86, X86_MOV_R32_I32, RAX, instruction->src,
 					X86_CFG_ID | X86_CFG_DST_R
 				);
 				sc_x86OpcodePush(&x86, X86_POP_R64 + RBP);
@@ -918,7 +927,7 @@ start:
 
 			case SC_ASM_RET_M32: {
 				sc_x86Opcode(
-					&x86, X86_MOV_R32_RM32, RAX, instruction->dst,
+					&x86, X86_MOV_R32_RM32, RAX, instruction->src,
 					X86_CFG_RMB | X86_CFG_DST_R | X86_CFG_SRC_M
 				);
 				sc_x86OpcodePush(&x86, X86_POP_R64 + RBP);

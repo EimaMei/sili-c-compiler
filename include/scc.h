@@ -1,6 +1,8 @@
 #ifndef SC_SCC_INCLUDE_H
 #define SC_SCC_INCLUDE_H
 
+#define SILEX_USE_HASH
+#define SILEX_NO_LEN
 #include <sili.h>
 #include <sililex.h>
 

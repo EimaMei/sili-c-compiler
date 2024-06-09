@@ -144,6 +144,8 @@ void sc_actionEvaluateEx(scAction* action, scAstNode* node, usize i) {
 					token3 = si_arrayAt(action->values, i + 2);
 					SI_ASSERT_MSG(token3 != nil, "Expected an expression after the operator.");
 
+					si_printf("%i %i\n", token1->type, token3->type);
+
 					init->type = SC_INIT_BINARY;
 					init->value.binary.left = token1;
 					init->value.binary.operator = token2->token.operator;
