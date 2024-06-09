@@ -12,14 +12,30 @@ scType* sc_typeGetFromKeyword(scKeyword keyword) {
 }
 
 
-scType sc_typeGet(scLexer* lex) {
-	SI_ASSERT(lex->type == SILEX_TOKEN_KEYWORD);
+scType sc_typeGet(scLexer* lex, scInfoTable* scope) {
+	scType* baseType;
+	scType type;
+	scKeyword keyword;
+	b32 typedefed = false;
 
-	scKeyword keyword = lex->token.keyword;
-	SI_STOPIF(!silex_keywordIsType(keyword), return (scType){.size = -1});
+	if (lex->type == SILEX_TOKEN_KEYWORD) {
+		keyword = lex->token.keyword;
+		SI_STOPIF(!silex_keywordIsType(keyword), return (scType){.size = -2});
 
-	scType* baseType = sc_typeGetFromKeyword(keyword);
-	scType type = *baseType;
+		baseType = sc_typeGetFromKeyword(keyword);
+		type = *baseType;
+	}
+	else if (lex->type == SILEX_TOKEN_IDENTIFIER) {
+		scIdentifierKey* key = si_hashtableGetWithHash(scope->identifiers, lex->token.identifier.hash);
+		SI_STOPIF(
+			key == nil || key->type != SC_IDENTIFIER_KEY_TYPE || !(key->rank < scope->rank),
+			return (scType){.size = -1}
+		);
+		baseType = (scType*)key->identifier;
+		type = *baseType;
+		typedefed = true;
+	}
+	else SI_PANIC();
 
 	b32 signedModifier = false;
 	b32 res;
@@ -46,9 +62,9 @@ retry:
 				case SILEX_KEYWORD_SHORT:
 				case SILEX_KEYWORD_INT:
 				case SILEX_KEYWORD_LONG: {
-					SI_ASSERT_MSG(si_betweenu(keyword, SILEX_KEYWORD_SIGNED, SILEX_KEYWORD_UNSIGNED), "You cannot have multiple types.");
+					SI_ASSERT_MSG(si_betweenu(keyword, SILEX_KEYWORD_SIGNED, SILEX_KEYWORD_UNSIGNED) && !typedefed, "You cannot have multiple types.");
 					SI_ASSERT_MSG(signedModifier == false, "You cannot have multiple signed modifiers.");
-					SI_ASSERT_MSG(type.traits & SC_TYPE_INT, "Signed modifiers cannot be used for non-integers.");
+					SI_ASSERT_MSG(type.traits & SC_TYPE_INT, "Sign modifiers cannot be used for non-integers.");
 
 					type = *sc_typeGetFromKeyword(lex->token.keyword);
 					if (keyword == SILEX_KEYWORD_UNSIGNED) {
@@ -57,9 +73,11 @@ retry:
 					goto retry;
 				}
 
+				case SILEX_KEYWORD_SIGNED:
 				case SILEX_KEYWORD_UNSIGNED: {
+					SI_ASSERT_MSG(!typedefed, "Cannot used sign modifiers for custom types.");
 					SI_ASSERT_MSG(!si_betweenu(keyword, SILEX_KEYWORD_SIGNED, SILEX_KEYWORD_UNSIGNED), "You cannot have multiple signed modifiers.");
-					SI_ASSERT_MSG(type.traits & SC_TYPE_INT, "Signed modifiers cannot be used for non-integers.");
+					SI_ASSERT_MSG(type.traits & SC_TYPE_INT, "Sign modifiers cannot be used for non-integers.");
 
 					if (lex->token.keyword == SILEX_KEYWORD_UNSIGNED) {
 						type.traits |= SC_TYPE_UNSIGNED;
@@ -77,16 +95,13 @@ retry:
 	return type;
 }
 
-void sc_initializerConstantCalc(scInitializer* init, scOperator operator, scTokenStruct* right) {
-	init->type = SC_INIT_CONSTANT;
-
-	scConstant* constant = &init->value.constant;
+void sc_constantArithmetic(scConstant* constant, scOperator operator, scConstant src) {
 	switch (operator) {
 		case SILEX_OPERATOR_PLUS:
-			constant->value.integer += right->token.constant.value.integer;
+			constant->value.integer += src.value.integer;
 			break;
 		case SILEX_OPERATOR_MINUS:
-			constant->value.integer -= right->token.constant.value.integer;
+			constant->value.integer -= src.value.integer;
 			break;
 		default: SI_PANIC();
 	}
@@ -216,8 +231,9 @@ scVariable* sc_variableGetAndOptimizeToken(scInfoTable* scope, scTokenStruct* to
 	SI_STOPIF(var == nil, return nil);
 
 	if (var->init && var->init->type == SC_INIT_CONSTANT) {
-		token->type = SILEX_TOKEN_CONSTANT;
-		token->token.constant = var->init->value.constant;
+		//SI_PANIC();
+		//token->type = SILEX_TOKEN_CONSTANT;
+		//token->token.constant = var->init->value.constant;
 	}
 
 	*res = 0;

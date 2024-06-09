@@ -314,9 +314,9 @@ extern scType type_double;
 
 scType* sc_typeGetFromKeyword(scKeyword keyword);
 
-scType sc_typeGet(scLexer* lex);
+scType sc_typeGet(scLexer* lex, scInfoTable* scope);
 
-void sc_initializerConstantCalc(scInitializer* init, scOperator operator, scTokenStruct* right);
+void sc_constantArithmetic(scConstant* constant, scOperator operator, scConstant src);
 
 scPunctuator sc_actionAddValues(scLexer* lex, scAction* action);
 

@@ -12,7 +12,7 @@ This section isn't meant to taken 100% seriously, there are a lot of other compo
     - [x] `int x = <identifier (static/non-static)>;`
     - [x] `int x = <identifier/int> <+|-> <identifier/int>;`
     - [x] `int x = <identifier/int> <+|-> <identifier/int> <+|-> <identifier/int>...`
-    - [x] `,` operator use (`NOTE:` Doesn't assert that a variable doesn't exist if it's declared later in the comma chain).
+    - [x] `,` operator use (`NOTE:` Doesn't assert when a variable doesn't exist if it's declared later in the comma chain).
 - [ ] `void` in general
 - [ ] pointers 
 - [ ] structures 
@@ -66,7 +66,7 @@ This section isn't meant to taken 100% seriously, there are a lot of other compo
 - [ ] `if` statements
 - [ ] `do` statements
 - [ ] `switch` statements 
-- [ ] `typedef`
+- [ ] `typedef` (NOTE: Implemented for `int`, crashes when it's used as a return type)
 - [x] `_start` entrypoint for x86-64 Linux.
 
 # Credits (for fun)

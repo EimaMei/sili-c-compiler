@@ -80,19 +80,28 @@ switch (node->type) {
 							  var->location = stack;
 #endif
 void sc_astNodeToAsm(scInfoTable* scope, scAsm* instructions, scAsmType asmTypes[3],
-		b32 useRegForBinary, u32 typeSize, scInitializer* initializer, u32 dst, u32 src) {
+		b32 useRegForBinary, u32 typeSize, scAstNode* node, u32 regSrc) {
 	scAsm asm;
-	scInitializer* init = initializer;
 
-start:
+	scInitializer* init = node->init;
+
 	switch (init->type) {
 		case SC_INIT_CONSTANT: {
 			scConstant constant = init->value.constant;
 
 			/* TODO(EimaMei): SC_ASM_LD_M64_I64. */
 			asm.type = sc_asmGetCorrectType(asmTypes[0], typeSize);
-			asm.dst = dst;
 			asm.src = constant.value.integer;
+
+			if (node->key) {
+				scIdentifierKey* key = node->key;
+				SI_ASSERT(key->type == SC_IDENTIFIER_KEY_VAR);
+				scVariable* var = (scVariable*)key->identifier;
+				asm.dst = var->location;
+			}
+			else {
+				asm.dst = 0;
+			}
 
 			si_arrayPush(&instructions, asm);
 			break;
@@ -105,15 +114,26 @@ start:
 			scVariable* var = (scVariable*)key->identifier;
 
 			asm.type = sc_asmGetCorrectType(asmTypes[1], var->type.size);
-			asm.dst = dst;
 			asm.src = var->location;
+
+			if (node->key) {
+				scIdentifierKey* key = node->key;
+				SI_ASSERT(key->type == SC_IDENTIFIER_KEY_VAR);
+				scVariable* var = (scVariable*)key->identifier;
+				asm.dst = var->location;
+			}
+			else {
+				asm.dst = 0;
+			}
 
 			si_arrayPush(&instructions, asm);
 			break;
 		}
 		case SC_INIT_BINARY: {
-			scTokenStruct* left = init->value.binary.left,
-						  *right = init->value.binary.right;
+			scTokenStruct* left, *right;
+start:
+			left = init->value.binary.left,
+			right = init->value.binary.right;
 			scOperator operator = init->value.binary.operator;
 
 			scTokenStruct* arguments[2] = {left, right};
@@ -147,7 +167,6 @@ start:
 
 						scVariable* var = (scVariable*)key->identifier;
 						asm.type = sc_asmGetCorrectType(types[j][0], var->type.size);
-						asm.dst = dst;
 						asm.src = var->location;
 
 						break;
@@ -156,12 +175,22 @@ start:
 						scConstant constant = arg->token.constant;
 
 						asm.type = sc_asmGetCorrectType(types[j][1], typeSize);
-						asm.dst = dst;
 						asm.src = constant.value.integer;
 
 						break;
 					}
 				}
+
+				if (node->key) {
+					scIdentifierKey* key = node->key;
+					SI_ASSERT(key->type == SC_IDENTIFIER_KEY_VAR);
+					scVariable* var = (scVariable*)key->identifier;
+					asm.dst = var->location;
+				}
+				else {
+					asm.dst = 0;
+				}
+
 				si_arrayPush(&instructions, asm);
 			}
 
@@ -175,8 +204,8 @@ start:
 
 	if (useRegForBinary) {
 		asm.type = sc_asmGetCorrectType(asmTypes[2], typeSize);
-		asm.dst = dst;
-		asm.src = src;
+		asm.dst = 0;
+		asm.src = regSrc;
 		si_arrayPush(&instructions, asm);
 	}
 }
@@ -205,6 +234,7 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 
 			case SC_ACTION_RETURN: {
 				node.type = SC_AST_RETURN;
+				node.key = nil;
 				sc_actionEvaluate(action, &node);
 				break;
 			}
@@ -235,8 +265,7 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 						switch (prevInit->type) {
 							case SC_INIT_CONSTANT: {
 								scConstant constant = prevInit->value.constant;
-								left = prevTokenStruct[0];
-								init->value.binary.left = left;
+								left = init->value.binary.left = prevTokenStruct[0];
 
 								left->type = SILEX_TOKEN_CONSTANT;
 								left->token.constant = constant;
@@ -247,7 +276,6 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 								else  {
 									*prevInit = *init;
 								}
-								init = prevInit;
 
 								break;
 							}
@@ -286,22 +314,23 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 					}
 					else {
 						i32 err;
-						sc_variableGetAndOptimizeToken(scope, left, &err);
+						scVariable* leftVar = sc_variableGetAndOptimizeToken(scope, left, &err);
 						sc_variableErrorCheck(err);
 					}
 					i32 err;
-					sc_variableGetAndOptimizeToken(scope, right, &err);
+					scVariable* rightVar = sc_variableGetAndOptimizeToken(scope, right, &err);
 					sc_variableErrorCheck(err);
 
 					prevTokenStruct[0] = left;
 					prevTokenStruct[1] = right;
 
 					if (left->type == SILEX_TOKEN_CONSTANT && left->type == right->type) {
-
 						scOperator op = init->value.binary.operator;
 						init->value.constant = left->token.constant;
 
-						sc_initializerConstantCalc(init, op, right);
+						sc_constantArithmetic(&left->token.constant, op, right->token.constant);
+						init->type = SC_INIT_CONSTANT;
+						init->value.constant = left->token.constant;
 					}
 
 					break;
@@ -313,8 +342,9 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 					sc_variableErrorCheck(err);
 
 					if (var->init && var->init->type == SC_INIT_CONSTANT) {
-						init->type = SC_INIT_CONSTANT;
-						init->value = var->init->value;
+						//SI_PANIC();
+						//init->type = SC_INIT_CONSTANT;
+						//init->value = var->init->value;
 					}
 
 					break;
@@ -368,8 +398,8 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 				sc_astNodeToAsm(
 					scope, instructions,
 					si_buf(u32, SC_ASM_LD_M8_I8, SC_ASM_LD_M8_M8), false,
-					var->type.size, node->init,
-					var->location, 0
+					var->type.size, node,
+					0
 				);
 				break;
 			}
@@ -377,8 +407,8 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 				sc_astNodeToAsm(
 					scope, instructions,
 					si_buf(u32, SC_ASM_RET_I8, SC_ASM_RET_M8, SC_ASM_RET_R8), node->init->type == SC_INIT_BINARY,
-					func->type.size, node->init,
-					0, SC_RETURN_REGISTER
+					func->type.size, node,
+					SC_RETURN_REGISTER
 				);
 				break;
 			}
@@ -405,6 +435,32 @@ void sc_functionValidateMain(scFunction* func) {
 		scType* type = &func->paramTypes[i];
 		SI_ASSERT_FMT(sc_typeCmp(type, &mainTypes[i]), "Argument %llz's type is incorrect", i + 1);
 	}
+}
+
+scIdentifierKey* sc_identifierKeyGet(scInfoTable* scope, u64 name, scIdentifierKeyType type) {
+	b32 res;
+	siHashEntry* entry = si_hashtableSetWithHash(scope->identifiers, name, nil, &res);
+
+	scIdentifierKey* key;
+	if (res == false) { /* An identifier already exists in the list. */
+		key = entry->value;
+		SI_ASSERT_MSG(scope->rank < key->rank, "An identifier already exists.");
+	}
+	else { /* Nothing is occupied. */
+		usize size;
+		switch (type) {
+			case SC_IDENTIFIER_KEY_VAR: size = sizeof(scVariable); break;
+			case SC_IDENTIFIER_KEY_FUNC: size = sizeof(scFunction); break;
+			case SC_IDENTIFIER_KEY_TYPE: size = sizeof(scType); break;
+			default: SI_PANIC();
+		}
+		key = si_malloc(alloc[SC_MAIN], sizeof(scIdentifierKey) + size);
+		entry->value = key;
+	}
+	key->type = type;
+	key->rank = scope->rank;
+
+	return key;
 }
 
 scGlobalInfoTable global_scope;
@@ -548,10 +604,11 @@ int main(void) {
 
 	while (silex_lexerTokenGet(&lex)) {
 		switch (lex.type) {
+			case SILEX_TOKEN_IDENTIFIER:
 			case SILEX_TOKEN_KEYWORD: {
-				scType type = sc_typeGet(&lex);
+				scType type = sc_typeGet(&lex, scope);
 
-				if (type.size != -1) {
+				if (type.size > -1) {
 					b32 isCreatingVar = false;
 start:
 					SI_ASSERT(lex.type == SILEX_TOKEN_IDENTIFIER);
@@ -603,7 +660,7 @@ start:
 							paramLoop: {
 								res = silex_lexerTokenGet(&lex);
 
-								scType type = sc_typeGet(&lex);
+								scType type = sc_typeGet(&lex, scope);
 								SI_ASSERT(res && lex.type == SILEX_TOKEN_IDENTIFIER);
 								u64 hash = lex.token.identifier.hash;
 
@@ -666,7 +723,6 @@ start:
 									break;
 								}
 								case ';': {
-									scope->rank = UINT16_MAX;
 									for_range (i, 0, paramsLen) {
 										usize index = params[i];
 										scIdentifierKey* key = funcScope->identifiers[index].value;
@@ -689,10 +745,7 @@ start:
 						}
 
 						case '=': {
-							scIdentifierKey* key = si_malloc(alloc[SC_MAIN], sizeof(scIdentifierKey) + sizeof(scVariable));
-							key->type = SC_IDENTIFIER_KEY_VAR;
-							key->rank = scope->rank;
-
+							scIdentifierKey* key = sc_identifierKeyGet(scope, name, SC_IDENTIFIER_KEY_VAR);
 							scVariable* pVar = (scVariable*)key->identifier;
 							pVar->type = type;
 
@@ -704,14 +757,6 @@ start:
 							scPunctuator punc = sc_actionAddValues(&lex, &action);
 							if (curFunc == nil) {
 								SI_PANIC();
-							}
-
-							b32 res;
-							siHashEntry* entry = si_hashtableSetWithHash(scope->identifiers, name, key, &res);
-							if (res == false) {
-								scIdentifierKey* oldKey = entry->value;
-								SI_ASSERT_MSG(key->rank < oldKey->rank, "Variable already exists.");
-								entry->value = key;
 							}
 
 							si_arrayPush(&curFunc->code, action);
@@ -731,10 +776,13 @@ start:
 						case ';':
 							si_printf("Found a variable that exists.\n");
 							break;
-						default: SI_PANIC();
+						default: si_printf("%c\n", lex.token.punctuator); SI_PANIC();
 					}
 
 					break;
+				}
+				else if (type.size == -1) {
+					continue;
 				}
 
 				switch (lex.token.keyword) {
@@ -745,6 +793,28 @@ start:
 
 						sc_actionAddValues(&lex, &action);
 						si_arrayPush(&curFunc->code, action);
+						break;
+					}
+					case SILEX_KEYWORD_TYPEDEF: {
+						scType type;
+						u64 name;
+						b32 res = silex_lexerTokenGet(&lex);
+						SI_ASSERT(res && lex.type == SILEX_TOKEN_KEYWORD);
+
+						type = sc_typeGet(&lex, scope);
+						SI_ASSERT(type.size != -1);
+
+						SI_ASSERT(res && lex.type == SILEX_TOKEN_IDENTIFIER);
+						name = lex.token.identifier.hash;
+
+						scIdentifierKey* key = sc_identifierKeyGet(scope, name, SC_IDENTIFIER_KEY_TYPE);
+
+						scType* typedefType = (scType*)key->identifier;
+						*typedefType = type;
+
+						res = silex_lexerTokenGet(&lex);
+						SI_ASSERT(res && lex.type == SILEX_TOKEN_PUNCTUATOR && lex.token.punctuator == ';');
+
 						break;
 					}
 					default: SI_PANIC();
@@ -791,6 +861,7 @@ start:
 	}
 	si_timeStampPrintSince(ts);
 #endif
+	SI_ASSERT_MSG(global_scope.mainFuncID != 0, "no main, no game");
 
 
 
