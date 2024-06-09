@@ -7,15 +7,16 @@ Main goal is to obviously make the compiler C89 standard compliant. If that were
 # Features/TODO 
 This section isn't meant to taken 100% seriously, there are a lot of other components that I'm probably missing:
 - [x] `argc`, `argv`
-- [ ] variable declarations:
+- [x] variable declarations:
     - [x] `int x = <int>;`
     - [x] `int x = <identifier (static/non-static)>;`
     - [x] `int x = <identifier/int> <+|-> <identifier/int>;`
-    - [ ] `int x = <identifier/int> <+|-> <identifier/int> <+|-> <identifier/int>...` (`NOTE:` Crashes the compiler)
+    - [x] `int x = <identifier/int> <+|-> <identifier/int> <+|-> <identifier/int>...`
     - [x] `,` operator use (`NOTE:` Doesn't assert that a variable doesn't exist if it's declared later in the comma chain).
 - [ ] `void` in general
 - [ ] pointers 
 - [ ] structures 
+- [ ] unions
 - [ ] return:
     - [ ] 8-bit, 16-bit returns
     - [ ] 32-bit returns (`NOTE:` Mostly complete)
@@ -23,10 +24,49 @@ This section isn't meant to taken 100% seriously, there are a lot of other compo
     - [ ] 128-bit, 256-bit, etc returns
 - [ ] functions:
     - [ ] K&R function declarations/implementations.
-    - [ ] `void` as a declaration.
-    - [x] Function implementations.
-    - [x] Function declarations.
-    - [ ] Function calls.
+    - [ ] `void` as a declaration
+    - [x] Function implementations
+    - [x] Function declarations
+    - [ ] Function calls
+- [ ] arithmetic operators:
+    - [x] `+` add
+    - [x] `-` sub
+    - [ ] `*` mul
+    - [ ] `/` div
+    - [ ] `%` mod
+- [ ] bit operators:
+    - [ ] `|` OR
+    - [ ] `~` XOR
+    - [ ] `&` AND
+    - [ ] `<<` left shift
+    - [ ] `>>` right shift
+- [ ] comparison operators:
+    - [ ] `==` equal
+    - [ ] `!=` not equal
+    - [ ] `<` less
+    - [ ] `<=` less or equal
+    - [ ] `>` greater
+    - [ ] `>=` greater or equal
+    - [ ] `&&` short-circuiting logical and
+    - [ ] `||` hort-circuiting logical or
+- [ ] logical operators:
+    - [ ] `&&` conditional AND
+    - [ ] `||` conditional OR
+    - [ ] `!` NOT
+- [ ] compound operators:
+    - [ ] `+=` add and assign
+    - [ ] `-=` sub and assign
+    - [ ] `*=` mul and assign
+    - [ ] `/=` div and assign
+    - [ ] `|=` OR and assign
+    - [ ] `~=` XOR and assign
+    - [ ] `&=` AND and assign
+    - [ ] `<<=` left shift and assign
+    - [ ] `>>=` right shift and assign 
+- [ ] `if` statements
+- [ ] `do` statements
+- [ ] `switch` statements 
+- [ ] `typedef`
 - [x] `_start` entrypoint for x86-64 Linux.
 
 # Credits (for fun)

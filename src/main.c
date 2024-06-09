@@ -134,7 +134,9 @@ start:
 			}
 
 			scAsmType* types[2] = {typesLD, typesOP};
-			for_range (j, 0, countof(arguments)) {
+			/* NOTE(EimaMei): '(left == nil)' ignoruoja pirmąjį argumentą, jei jis
+			 * yra nežinomasis. */
+			for_range (j, (left == nil), countof(arguments)) {
 				scTokenStruct* arg = arguments[j];
 
 				switch (arg->type) {
@@ -214,7 +216,7 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 	SI_LOG("== scAction -> scAst complete  ==\n");
 
 	scInitializer* prevInit;
-	scTokenStruct* prevTokenStruct;
+	scTokenStruct* prevTokenStruct[2];
 
 	for_range (i, 0, si_arrayLen(ast)) {
 		scAstNode* node = &ast[i];
@@ -229,37 +231,72 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 					scTokenStruct* left = init->value.binary.left,
 								  *right = init->value.binary.right;
 
-					si_printf("%i %i\n", left->type, right->type);
 					if (left == nil) {
 						switch (prevInit->type) {
 							case SC_INIT_CONSTANT: {
 								scConstant constant = prevInit->value.constant;
-								left = init->value.binary.left = prevTokenStruct;
-								left->type = SC_INIT_CONSTANT;
+								left = prevTokenStruct[0];
+								init->value.binary.left = left;
+
+								left->type = SILEX_TOKEN_CONSTANT;
 								left->token.constant = constant;
 
 								if (start == prevInit) {
 									node->init = init;
 								}
-								else SI_PANIC();
-
-								//init = prevInit;
+								else  {
+									*prevInit = *init;
+								}
+								init = prevInit;
 
 								break;
+							}
+							case SC_INIT_BINARY: {
+								for_range (i, 0, countof(prevTokenStruct)) {
+									left = prevTokenStruct[i];
+
+									if (left->type == SILEX_TOKEN_CONSTANT && left->type == right->type) {
+										scOperator operator = init->value.binary.operator;
+										switch (operator) {
+											case SILEX_OPERATOR_PLUS:
+												left->token.constant.value.integer += right->token.constant.value.integer;
+												break;
+											case SILEX_OPERATOR_MINUS:
+												left->token.constant.value.integer -= right->token.constant.value.integer;
+												break;
+											/* case SILEX_OPERATOR_MUL: oppositeLeft *= right; */
+											default: SI_PANIC();
+										}
+										prevInit->next = init->next;
+										init = prevInit;
+										break;
+									}
+								}
+								i32 err;
+								sc_variableGetAndOptimizeToken(scope, right, &err);
+								sc_variableErrorCheck(err);
+
+								prevInit = init;
+								init = init->next;
+
+								continue;
 							}
 							default: SI_PANIC();
 						}
 					}
+					else {
+						i32 err;
+						sc_variableGetAndOptimizeToken(scope, left, &err);
+						sc_variableErrorCheck(err);
+					}
+					i32 err;
+					sc_variableGetAndOptimizeToken(scope, right, &err);
+					sc_variableErrorCheck(err);
 
-					i32 err1, err2;
-					scVariable* leftVar = sc_variableGetAndOptimizeToken(scope, left, &err1);
-					scVariable* rightVar = sc_variableGetAndOptimizeToken(scope, right, &err2);
-					sc_variableErrorCheck(err1);
-					sc_variableErrorCheck(err2);
+					prevTokenStruct[0] = left;
+					prevTokenStruct[1] = right;
 
 					if (left->type == SILEX_TOKEN_CONSTANT && left->type == right->type) {
-						prevTokenStruct = init->value.binary.left;
-						prevInit = init;
 
 						scOperator op = init->value.binary.operator;
 						init->value.constant = left->token.constant;
@@ -286,6 +323,7 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 				default: SI_PANIC();
 			}
 
+			prevInit = init;
 			init = init->next;
 		}
 	}

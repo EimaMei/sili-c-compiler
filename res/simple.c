@@ -1,7 +1,7 @@
 int func(int x);
 
 int main(int argc, char** argv) {
-	return 2 + 2 + argc;
+	return -222 + 2 + argc + -2 + argc + argc + argc + argc + 2 + 222;
 }
 /*
 
