@@ -162,8 +162,12 @@ typedef SI_ENUM(u32, scOperator) {
 	SILEX_OPERATOR_MULTIPLY,
 	SILEX_OPERATOR_DIVIDE,
 
-	SILEX_OPERATOR_PLUSPLUS,
-	SILEX_OPERATOR_MINUSMINUS,
+	SILEX_OPERATOR_PLUS_PLUS,
+	SILEX_OPERATOR_MINUS_MINUS,
+
+
+	SILEX_OPERATOR_PLUS_ASSIGN,
+	SILEX_OPERATOR_MINUS_ASSIGN
 };
 
 
@@ -339,16 +343,20 @@ b32 silex_lexerTokenGet(scLexer* lexer) {
 	SI_STOPIF(lexer->curData >= lexer->end, lexer->type = SILEX_TOKEN_EOF; return false);
 
 	const char* pLetter = lexer->curData;
+start:
 	while (si_charIsSpace(*pLetter)) { pLetter += 1; }
 	SI_STOPIF(pLetter >= lexer->end, lexer->type = SILEX_TOKEN_EOF; return false);
 
 	if (SI_TO_U16(pLetter) == SI_TO_U16("/*")) {
 		pLetter += 2;
-		u16 end = SI_TO_U16("*/");
-		while (SI_TO_U16(pLetter) != end) {
+back:
+		while (*pLetter != '*') {
 			pLetter += 1;
 		}
-		pLetter += 2;
+		pLetter += 1;
+		SI_STOPIF(*pLetter != '/', pLetter += 1; goto back);
+		pLetter += 1;
+		goto start;
 	}
 
 
@@ -400,7 +408,13 @@ b32 silex_lexerTokenGet(scLexer* lexer) {
 			if (*pLetter == *ogChar) {
 				lexer->curData = pLetter + 1;
 				lexer->type = SILEX_TOKEN_OPERATOR;
-				lexer->token.operator = SILEX_OPERATOR_PLUSPLUS + (*ogChar == '-');
+				lexer->token.operator = SILEX_OPERATOR_PLUS_PLUS + (*ogChar == '-');
+				return true;
+			}
+			else if (*pLetter == '=') {
+				lexer->curData = pLetter + 1;
+				lexer->type = SILEX_TOKEN_OPERATOR;
+				lexer->token.operator = SILEX_OPERATOR_PLUS_ASSIGN + (*ogChar == '-');
 				return true;
 			}
 			while (si_charIsSpace(*pLetter)) { pLetter += 1; }

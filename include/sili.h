@@ -41,16 +41,17 @@ DOCUMENTATION
 		description of the macro. /
 		#define smth(argumentName, otherArgumentName, .../ VALUES/)
 
-	- More often than not a macro's argument will not be a specific type and instead
-	some kind of 'text'. Such arguments are noted if their type denotation is
-	A FULLY CAPITALIZED KEYWORD. This is a general list of the keywords, their meanings
-	and examples of them:
+	- More often than not a macro's argument will not be a specific type and
+	instead some kind of 'text'. Such arguments are noted if their type denotation
+	is a fuly CAPITALIZED keyword. This is a general list of the keywords, their
+	meanings and examples of them:
 		- TYPE - the type name (siString, usize, rawptr).
 		- TYPE* - the pointer of a type (siString*, usize*, rawptr*).
 		- INT - a signed integer (50, -250LL, ISIZE_MAX).
 		- UINT - an unsigned integer (50, 250ULL, USIZE_MAX).
 		- FUNCTION - the name of any visibly-exposed function without enquotes.
 		- EXPRESSION - any legal C value (60, "hello", SI_RGB(255, 255, 255)).
+		- VARIADIC - an indefinite amount of valid expressions ("firstValue", 230, "third")
 		- NAME - regular text with no enquotes (test, var, len).
 		- VAR - any variable that's visible in the current scope.
 		- ANYTHING - anything.
@@ -939,7 +940,7 @@ usize si_assertEx(b32 condition, cstring conditionStr, cstring file, i32 line,
 /* condition - EXPRESSION | message - cstring
  * Crashes the app with a message if the condition is not met. */
 #define SI_ASSERT_MSG(condition, message) si_assertEx(condition, #condition, __FILE__, __LINE__, __func__, message, "")
-/* condition - EXPRESSION | message - cstring | ...FMT - VARIADIC ARGUMENTS
+/* condition - EXPRESSION | message - cstring | ...FMT - VARIADIC
  * Crashes the app with a formatted message if the condition is not met. */
 #define SI_ASSERT_FMT(condition, message, ...) si_assertEx(condition, #condition, __FILE__, __LINE__, __func__, message, __VA_ARGS__)
 /* ptr - rawptr
@@ -961,6 +962,10 @@ usize si_assertEx(b32 condition, cstring conditionStr, cstring file, i32 line,
 /* message - cstring
  * Crashes the app immediately with a message. */
 #define SI_PANIC_MSG(message) do { si_assertEx(false, "SI_PANIC()", __FILE__, __LINE__, __func__, message, ""); SI_DEBUG_TRAP(); } while(0)
+/* message - cstring | ...FMT - VARIADIC
+ * Crashes the app immediately with a formatted message. */
+#define SI_PANIC_FMT(message, ...) do { si_assertEx(false, "SI_PANIC()", __FILE__, __LINE__, __func__, message, __VA_ARGS__); } while (0)
+
 /* condition - EXPRESSION | ACTION - ANYTHING
  * Checks if the condition is true. If it is, execute 'action'. */
 #define SI_STOPIF(condition, .../* ACTION */) if (condition) { __VA_ARGS__; } do {} while(0)
@@ -7399,7 +7404,7 @@ const siBenchmarkLimit* si_benchmarkLimitLoop(siTimeStamp time) {
 	/* condition - EXPRESSION | message - cstring
 	 * Crashes the app with a message if the condition is not met. */
 	#define SI_ASSERT_MSG(condition, message) si_assertEx(condition, #condition, __FILE__, __LINE__, __func__, message, "")
-	/* condition - EXPRESSION | message - cstring | ...FMT - VARIADIC ARGUMENTS
+	/* condition - EXPRESSION | message - cstring | ...FMT - VARIADIC
 	 * Crashes the app with a formatted message if the condition is not met. */
 	#define SI_ASSERT_FMT(condition, message, ...) si_assertEx(condition, #condition, __FILE__, __LINE__, __func__, message, __VA_ARGS__)
 	/* ptr - rawptr

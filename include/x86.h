@@ -70,12 +70,15 @@ typedef struct {
 
 #define X86_MOV_RM32_R32 0x89
 
+#define X86_MOV_R8_RM8 0x8A
+
 #define X86_MOV_R32_RM32 0x8B
 
 #define X86_LEA_R32_RM32 0x8D
 
 #define X86_MOV_R32_I32 0xB8
 #define X86_MOV_RM32_I32 0xC7
+#define X86_MOV_RM8_I8 0xC6
 
 #define X86_RET 0xC3
 
@@ -243,6 +246,13 @@ void sc_x86OpcodeEx(x86EnvironmentState* state, u8 opcode, u32 dst, u32 src, u8 
 
 	switch (config & X86_CFG_INTWORD_BITS) {
 		case 0: break;
+
+		case X86_CFG_IB:
+			memcpy(&out[i], &src, sizeof(u8)), i += 1;
+			break;
+		case X86_CFG_IW:
+			memcpy(&out[i], &src, sizeof(u16)), i += 2;
+			break;
 		case X86_CFG_ID:
 			memcpy(&out[i], &src, sizeof(u32)), i += 4;
 			break;

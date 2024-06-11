@@ -2,7 +2,6 @@
 #define SC_SCC_INCLUDE_H
 
 #define SILEX_USE_HASH
-#define SILEX_NO_LEN
 #include <sili.h>
 #include <sililex.h>
 
@@ -22,7 +21,7 @@ typedef struct scInitializer {
 			scTokenStruct* right;
 		} binary;
 		scConstant constant;
-		scString identifier;
+		u64 identifier;
 	} value;
 
 	struct scInitializer* next;
@@ -33,7 +32,10 @@ typedef SI_ENUM(u32, scActionType) {
 	SC_ACTION_SCOPE_END,
 
 	SC_ACTION_VAR_ASSIGN,
-	SC_ACTION_VAR_CREATE,
+	SC_ACTION_VAR_ADD,
+	SC_ACTION_VAR_SUB,
+	SC_ACTION_VAR_MUL,
+	SC_ACTION_VAR_DIV,
 	SC_ACTION_RETURN,
 };
 typedef struct {
@@ -94,6 +96,12 @@ SI_STATIC_ASSERT(sizeof(scIdentifierKey) == 4);
 
 typedef SI_ENUM(u32, scAstNodeType) {
 	SC_AST_VAR_MAKE = 1,
+
+	SC_AST_VAR_ADD,
+	SC_AST_VAR_SUB,
+	SC_AST_VAR_MUL,
+	SC_AST_VAR_DIV,
+
 	SC_AST_SCOPE_BEGIN,
 	SC_AST_SCOPE_END,
 	SC_AST_RETURN
@@ -314,7 +322,13 @@ extern scType type_double;
 
 scType* sc_typeGetFromKeyword(scKeyword keyword);
 
-scType sc_typeGet(scLexer* lex, scInfoTable* scope);
+/* */
+scType* sc_typeGet(scLexer* lex, scInfoTable* scope, scKeyword* outKeyword);
+/* */
+scType sc_typeMake(scLexer* lex, scType* baseType, scKeyword keyword);
+/* */
+scType sc_typeGetAndMake(scLexer* lex, scInfoTable* scope);
+
 
 void sc_constantArithmetic(scConstant* constant, scOperator operator, scConstant src);
 

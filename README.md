@@ -4,22 +4,24 @@ A pet project of mine that tries to (loosely) implement the C89 standard for x86
 # Goal
 Main goal is to obviously make the compiler C89 standard compliant. If that were to happen, C99 would be the next target. The most ultimate goal is to make the compiler self-hosted without GCC or clang (i dont recognize msvc as a valid C compiler).
 
-# Features/TODO 
+# Features/TODO
 This section isn't meant to taken 100% seriously, there are a lot of other components that I'm probably missing:
 - [x] `argc`, `argv`
-- [x] variable declarations:
+- [ ] variable declarations:
+    - [ ] `int x;`
     - [x] `int x = <int>;`
     - [x] `int x = <identifier (static/non-static)>;`
     - [x] `int x = <identifier/int> <+|-> <identifier/int>;`
     - [x] `int x = <identifier/int> <+|-> <identifier/int> <+|-> <identifier/int>...`
     - [x] `,` operator use (`NOTE:` Doesn't assert when a variable doesn't exist if it's declared later in the comma chain).
 - [ ] `void` in general
-- [ ] pointers 
-- [ ] structures 
+- [ ] scopes
+- [ ] pointers
+- [ ] structures
 - [ ] unions
 - [ ] return:
-    - [ ] 8-bit, 16-bit returns
-    - [ ] 32-bit returns (`NOTE:` Mostly complete)
+    - [+] 8-bit, 16-bit returns
+    - [+] 32-bit returns
     - [ ] 64-bit returns
     - [ ] 128-bit, 256-bit, etc returns
 - [ ] functions:
@@ -29,8 +31,8 @@ This section isn't meant to taken 100% seriously, there are a lot of other compo
     - [x] Function declarations
     - [ ] Function calls
 - [ ] arithmetic operators:
-    - [x] `+` add
-    - [x] `-` sub
+    - [x] `+` add (NOTE: Can't use in front of variables)
+    - [x] `-` sub (NOTE: Can't use in front of variables)
     - [ ] `*` mul
     - [ ] `/` div
     - [ ] `%` mod
@@ -53,21 +55,32 @@ This section isn't meant to taken 100% seriously, there are a lot of other compo
     - [ ] `&&` conditional AND
     - [ ] `||` conditional OR
     - [ ] `!` NOT
+- [ ] `=` assign operator
 - [ ] compound operators:
-    - [ ] `+=` add and assign
-    - [ ] `-=` sub and assign
+    - [ ] `++` add one:
+        - [ ] `++x` front
+        - [+] `x++` back
+    - [ ] `--` sub one:
+        - [ ] `--x` front
+        - [+] `x--` back
+    - [+] `+=` add and assign
+    - [ ] `-=` sub and assign (NOTE: Works for non-binary arguments, binary arguments however are broken)
     - [ ] `*=` mul and assign
     - [ ] `/=` div and assign
     - [ ] `|=` OR and assign
     - [ ] `~=` XOR and assign
     - [ ] `&=` AND and assign
     - [ ] `<<=` left shift and assign
-    - [ ] `>>=` right shift and assign 
+    - [ ] `>>=` right shift and assign
 - [ ] `if` statements
 - [ ] `do` statements
-- [ ] `switch` statements 
+- [ ] `switch` statements
 - [x] `typedef`
+- [ ] Variadic functions
 - [x] `_start` entrypoint for x86-64 Linux.
+
+## Other TODOs
+- Fix `si_realloc` for this compiler
 
 # Credits (for fun)
 (Intel x86 Opcode Table and Reference)[https://shell-storm.org/x86doc/] - a good source for checking the list of valid opcodes on x86-64 (don't even try to use the official Intel manual).

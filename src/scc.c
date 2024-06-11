@@ -12,34 +12,39 @@ scType* sc_typeGetFromKeyword(scKeyword keyword) {
 }
 
 
-scType sc_typeGet(scLexer* lex, scInfoTable* scope) {
+scType* sc_typeGet(scLexer* lex, scInfoTable* scope, scKeyword* outKeyword) {
 	scType* baseType;
-	scType type;
-	scKeyword keyword;
-	b32 typedefed = false;
+
 
 	if (lex->type == SILEX_TOKEN_KEYWORD) {
-		keyword = lex->token.keyword;
-		SI_STOPIF(!silex_keywordIsType(keyword), return (scType){.size = -2});
+		scKeyword keyword = lex->token.keyword;
+		SI_STOPIF(!silex_keywordIsType(keyword), return nil);
 
 		baseType = sc_typeGetFromKeyword(keyword);
-		type = *baseType;
+		*outKeyword = keyword;
 	}
 	else if (lex->type == SILEX_TOKEN_IDENTIFIER) {
-		scIdentifierKey* key = si_hashtableGetWithHash(scope->identifiers, lex->token.identifier.hash);
-		SI_STOPIF(
-			key == nil || key->type != SC_IDENTIFIER_KEY_TYPE || !(key->rank <= scope->rank),
-			return (scType){.size = -1}
+		scString identifier = lex->token.identifier;
+		scIdentifierKey* key = si_hashtableGetWithHash(scope->identifiers, identifier.hash);
+		SI_ASSERT_FMT(
+			key != nil && key->type == SC_IDENTIFIER_KEY_TYPE && key->rank <= scope->rank,
+			"Type '%*s' doesn't exist", identifier.len, lex->curData - identifier.len
 		);
 		baseType = (scType*)key->identifier;
-		type = *baseType;
-		typedefed = true;
+		*outKeyword = 0;
 	}
-	else SI_PANIC();
+	else SI_PANIC_MSG("Illegal token for a type");
 
+	return baseType;
+}
+
+scType sc_typeMake(scLexer* lex, scType* baseType, scKeyword keyword) {
 	b32 signedModifier = false;
 	b32 res;
 	b32 hasSetPtr = false;
+	b32 typedefed = (keyword == 0);
+
+	scType type = *baseType;
 retry:
 	res = silex_lexerTokenGet(lex);
 	SI_ASSERT(res);
@@ -96,6 +101,15 @@ retry:
 
 	return type;
 }
+
+scType sc_typeGetAndMake(scLexer* lex, scInfoTable* scope) {
+	scKeyword keyword;
+	scType* baseType = sc_typeGet(lex, scope, &keyword);
+	SI_STOPIF(baseType == nil, return (scType){.size = -2});
+
+	return sc_typeMake(lex, baseType, keyword);
+}
+
 
 void sc_constantArithmetic(scConstant* constant, scOperator operator, scConstant src) {
 	switch (operator) {
@@ -199,7 +213,7 @@ void sc_actionEvaluateEx(scAction* action, scAstNode* node, usize i) {
 				}
 
 				init->type = SC_INIT_IDENTIFIER;
-				init->value.identifier = token1->token.identifier;
+				init->value.identifier = token1->token.identifier.hash;
 				break;
 			}
 

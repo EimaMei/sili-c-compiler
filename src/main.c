@@ -1,5 +1,4 @@
 #define SILEX_USE_HASH
-#define SILEX_NO_LEN
 #include <sili.h>
 #include <sililex.h>
 
@@ -69,6 +68,52 @@ void x86_OP_M32_M32_EX(x86EnvironmentState* x86, scAsm* instruction, u8 opcode, 
 	);
 }
 
+
+#define X86_ASM_TEMPLATE_RMB_EX(x86, type, baseOpcode, instruction, extra, extra8bit, extra16bit, extra32bit, extra64bit) \
+	case (type): { \
+		x86Register reg = sc_x86RegisterConvert((x86), (instruction)->dst); \
+		sc_x86Opcode( \
+			x86, baseOpcode, reg, (instruction)->src, \
+			X86_CFG_RMB | (extra) |(extra8bit) \
+		); \
+		break; \
+	} \
+	case (type + 1): { \
+		x86Register reg = sc_x86RegisterConvert((x86), (instruction)->dst); \
+		sc_x86Opcode( \
+			x86, baseOpcode, reg, (instruction)->src, \
+			X86_CFG_RMB | (extra) | (extra16bit) \
+		); \
+		break; \
+	} \
+	case (type) + 2: { \
+		x86Register reg = sc_x86RegisterConvert((x86), (instruction)->dst); \
+		sc_x86Opcode( \
+			x86, (baseOpcode) + 1, reg, (instruction)->src, \
+			X86_CFG_RMB | (extra) | (extra32bit) \
+		); \
+		break; \
+	} \
+	case (type) + 3: { \
+		x86Register reg = sc_x86RegisterConvert((x86), (instruction)->dst); \
+		sc_x86Opcode( \
+			x86, (baseOpcode) + 1, reg, (instruction)->src, \
+			X86_CFG_RMB |  X86_CFG_64BIT | (extra) | (extra64bit) \
+		); \
+		break; \
+	} \
+
+#define X86_ASM_TEMPLATE_RMB(x86, type, baseOpcode, instruction, extra) \
+	X86_ASM_TEMPLATE_RMB_EX(x86, type, baseOpcode, instruction, extra, 0, 0, 0, 0)
+
+#define X86_ASM_TEMPLATE_R_M(x86, type, baseOpcode, instruction) \
+	X86_ASM_TEMPLATE_RMB(x86, type, baseOpcode, instruction, X86_CFG_DST_R | X86_CFG_DST_M)
+
+#define X86_ASM_TEMPLATE_M_I(x86, type, baseOpcode, instruction) \
+	X86_ASM_TEMPLATE_RMB_EX(x86, type, baseOpcode, instruction, X86_CFG_DST_M, X86_CFG_IB, X86_CFG_IW, X86_CFG_ID, X86_CFG_ID)
+
+
+
 #if 0
 switch (node->type) {
 	case SC_AST_VAR_MAKE: {
@@ -79,8 +124,9 @@ switch (node->type) {
 							  stack = si_alignCeilEx(stack + var->type.size, var->type.size);
 							  var->location = stack;
 #endif
-void sc_astNodeToAsm(scInfoTable* scope, scAsm* instructions, scAsmType asmTypes[3],
-		b32 useRegForBinary, u32 typeSize, scAstNode* node, u32 regSrc) {
+void sc_astNodeToAsm(scInfoTable* scope, scAsm* instructions, scOperator assignment,
+		scAsmType asmTypes[3], b32 useRegForBinary, u32 typeSize, scAstNode* node,
+		u32 regSrc) {
 	scAsm asm;
 
 	scInitializer* init = node->init;
@@ -107,7 +153,7 @@ void sc_astNodeToAsm(scInfoTable* scope, scAsm* instructions, scAsmType asmTypes
 			break;
 		}
 		case SC_INIT_IDENTIFIER: {
-			u64 hash = init->value.identifier.hash;
+			u64 hash = init->value.identifier;
 			scIdentifierKey* key = si_hashtableGetWithHash(scope->identifiers, hash);
 			SI_ASSERT(key->type != SC_IDENTIFIER_KEY_FUNC);
 
@@ -141,14 +187,14 @@ start:
 			scAsmType typesLD[2];
 			scAsmType typesOP[2];
 			if (!useRegForBinary) {
-				typesLD[0] = SC_ASM_LD_M8_M8;
-				typesLD[1] = SC_ASM_LD_M8_I8;
+				typesLD[0] = !assignment ? SC_ASM_LD_M8_M8 : sc_asmGetCorrectOperator(SC_ASM_ADD_M8_M8, assignment);
+				typesLD[1] = !assignment ? SC_ASM_LD_M8_I8 : sc_asmGetCorrectOperator(SC_ASM_ADD_M8_I8, assignment);
 				typesOP[0] = sc_asmGetCorrectOperator(SC_ASM_ADD_M8_M8, operator);
 				typesOP[1] = sc_asmGetCorrectOperator(SC_ASM_ADD_M8_I8, operator);
 			}
 			else {
-				typesLD[0] = SC_ASM_LD_R8_M8;
-				typesLD[1] = SC_ASM_LD_R8_I8;
+				typesLD[0] = !assignment ? SC_ASM_LD_R8_M8 : sc_asmGetCorrectOperator(SC_ASM_ADD_R8_M8, assignment);
+				typesLD[1] = !assignment ? SC_ASM_LD_R8_I8 : sc_asmGetCorrectOperator(SC_ASM_ADD_R8_I8, assignment);
 				typesOP[0] = sc_asmGetCorrectOperator(SC_ASM_ADD_R8_M8, operator);
 				typesOP[1] = sc_asmGetCorrectOperator(SC_ASM_ADD_R8_I8, operator);
 			}
@@ -184,6 +230,7 @@ start:
 				if (node->key) {
 					scIdentifierKey* key = node->key;
 					SI_ASSERT(key->type == SC_IDENTIFIER_KEY_VAR);
+
 					scVariable* var = (scVariable*)key->identifier;
 					asm.dst = var->location;
 				}
@@ -225,6 +272,28 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 				scVariable* var = (scVariable*)key->identifier;
 
 				node.type = SC_AST_VAR_MAKE;
+				node.key = key;
+
+				sc_actionEvaluateEx(action, &node, 1);
+				var->init = node.init;
+				break;
+			}
+			case SC_ACTION_VAR_ADD: {
+				scIdentifierKey* key = *si_cast(scIdentifierKey**, &action->values[0]);
+				scVariable* var = (scVariable*)key->identifier;
+
+				node.type = SC_AST_VAR_ADD;
+				node.key = key;
+
+				sc_actionEvaluateEx(action, &node, 1);
+				var->init = node.init;
+				break;
+			}
+			case SC_ACTION_VAR_SUB: {
+				scIdentifierKey* key = *si_cast(scIdentifierKey**, &action->values[0]);
+				scVariable* var = (scVariable*)key->identifier;
+
+				node.type = SC_AST_VAR_SUB;
 				node.key = key;
 
 				sc_actionEvaluateEx(action, &node, 1);
@@ -336,7 +405,7 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 					break;
 				}
 				case SC_INIT_IDENTIFIER: {
-					u64 hash = init->value.identifier.hash;
+					u64 hash = init->value.identifier;
 					i32 err;
 					scVariable* var = sc_variableGet(scope, hash, &err);
 					sc_variableErrorCheck(err);
@@ -396,8 +465,30 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 				var->location = stack;
 
 				sc_astNodeToAsm(
-					scope, instructions,
+					scope, instructions, 0,
 					si_buf(u32, SC_ASM_LD_M8_I8, SC_ASM_LD_M8_M8), false,
+					var->type.size, node,
+					0
+				);
+				break;
+			}
+			case SC_AST_VAR_ADD: {
+				scVariable* var = (scVariable*)node->key->identifier;
+
+				sc_astNodeToAsm(
+					scope, instructions, SILEX_OPERATOR_PLUS,
+					si_buf(u32, SC_ASM_ADD_M8_I8, SC_ASM_ADD_M8_M8), false,
+					var->type.size, node,
+					0
+				);
+				break;
+			}
+			case SC_AST_VAR_SUB: {
+				scVariable* var = (scVariable*)node->key->identifier;
+
+				sc_astNodeToAsm(
+					scope, instructions, SILEX_OPERATOR_MINUS,
+					si_buf(u32, SC_ASM_SUB_M8_I8, SC_ASM_SUB_M8_M8), false,
 					var->type.size, node,
 					0
 				);
@@ -405,7 +496,7 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 			}
 			case SC_AST_RETURN: {
 				sc_astNodeToAsm(
-					scope, instructions,
+					scope, instructions, 0,
 					si_buf(u32, SC_ASM_RET_I8, SC_ASM_RET_M8, SC_ASM_RET_R8), node->init->type == SC_INIT_BINARY,
 					func->type.size, node,
 					SC_RETURN_REGISTER
@@ -601,190 +692,303 @@ int main(void) {
 #if 1
 	siTimeStamp ts = si_timeStampStart();
 	scLexer lex = silex_lexerMake(text, textLen);
+	scType* baseType;
+	b32 res, commaMode = false;
+	scKeyword keyword;
+	scAction action;
 
 	while (silex_lexerTokenGet(&lex)) {
 		switch (lex.type) {
-			case SILEX_TOKEN_IDENTIFIER:
-			case SILEX_TOKEN_KEYWORD: {
-				scType type = sc_typeGet(&lex, scope);
+			case SILEX_TOKEN_IDENTIFIER: {
+				scString identifier = lex.token.identifier;
+				scIdentifierKey* key = si_hashtableGetWithHash(scope->identifiers, identifier.hash);
 
-				if (type.size > -1) {
-					b32 isCreatingVar = false;
-start:
-					SI_ASSERT(lex.type == SILEX_TOKEN_IDENTIFIER);
-					u64 name = lex.token.identifier.hash;
+				SI_ASSERT_FMT(
+					key != nil && key->rank <= scope->rank,
+					"Type '%*s' doesn't exist", identifier.len, lex.curData - identifier.len
+				);
 
-					b32 res = silex_lexerTokenGet(&lex);
-					SI_ASSERT(res && lex.type == SILEX_TOKEN_PUNCTUATOR);
+				switch (key->type) {
+					case SC_IDENTIFIER_KEY_TYPE: {
+						baseType = (scType*)key->identifier;
+						keyword = 0;
+						goto type_section;
+					}
+					case SC_IDENTIFIER_KEY_VAR: {
+						res = silex_lexerTokenGet(&lex);
+						SI_ASSERT(res);
 
-					switch (lex.token.punctuator) {
-						case '(': {
-							SI_ASSERT(curFunc == nil && isCreatingVar == false);
+						switch (lex.type) {
+							case SILEX_TOKEN_OPERATOR: {
+								switch (lex.token.operator) {
+									case SILEX_OPERATOR_PLUS_PLUS: {
+										action.type = SC_ACTION_VAR_ADD;
+										action.values = si_arrayMakeReserve(alloc[SC_MAIN], sizeof(scTokenStruct), 2);
+										si_arrayPush(&action.values, key);
 
-							scFunction* func;
-							scInfoTable* funcScope;
+										scTokenStruct* t = &action.values[1];
+										t->type = SILEX_TOKEN_CONSTANT;
+										t->token.constant.type = SILEX_CONSTANT_NUM_SIGNED;
+										t->token.constant.value.integer = 1;
+										SI_ARRAY_HEADER(action.values)->len = 2;
 
-							u32 params[128];
-							usize paramsLen = 0;
+										b32 res = silex_lexerTokenGet(&lex);
+										SI_ASSERT(res && lex.type == SILEX_TOKEN_PUNCTUATOR);
+										si_arrayPush(&curFunc->code, action);
 
-							b32 res, funcIsNew;
-							/* TODO(EimaMei): Atpažinti K&R apibrėžtis ir nepa-
-							 * vadintas deklaracijas. */
-							siHashEntry* entry;
+										switch (lex.token.punctuator) {
+											case ',': case ';': break;
+											default: SI_PANIC_MSG("Expression should end with a semicolin or continued via a comma punctuator.");
+										}
+										break;
+									}
+									case SILEX_OPERATOR_MINUS_MINUS: {
+										action.type = SC_ACTION_VAR_SUB;
+										action.values = si_arrayMakeReserve(alloc[SC_MAIN], sizeof(scTokenStruct), 2);
+										si_arrayPush(&action.values, key);
 
-							funcScope = si_mallocItem(alloc[SC_SCOPE], scInfoTable);
-							*funcScope = *scope;
-							funcScope->parent = scope;
-							funcScope->rank = 1;
+										scTokenStruct* t = &action.values[1];
+										t->type = SILEX_TOKEN_CONSTANT;
+										t->token.constant.type = SILEX_CONSTANT_NUM_SIGNED;
+										t->token.constant.value.integer = 1;
+										SI_ARRAY_HEADER(action.values)->len = 2;
 
-							entry = si_hashtableSetWithHash(global_scope.identifiers, name, nil, &funcIsNew);
-							if (funcIsNew) {
-								scIdentifierKey* key = si_malloc(alloc[SC_MAIN], sizeof(scIdentifierKey) + sizeof(scFunction));
-								key->type = SC_IDENTIFIER_KEY_FUNC;
-								/* key->rank = scope->rank; */
+										b32 res = silex_lexerTokenGet(&lex);
+										SI_ASSERT(res && lex.type == SILEX_TOKEN_PUNCTUATOR);
+										si_arrayPush(&curFunc->code, action);
 
-								func = (scFunction*)key->identifier;
-								func->type = type;
-								func->name = name;
-								func->code = si_arrayMakeReserve(alloc[SC_MAIN], sizeof(scAction), 0);
+										switch (lex.token.punctuator) {
+											case ',': case ';': break;
+											default: SI_PANIC_MSG("Expression should end with a semicolin or continued via a comma punctuator.");
+										}
+										break;
+									}
+									case SILEX_OPERATOR_PLUS_ASSIGN: {
+										action.type = SC_ACTION_VAR_ADD;
+										action.values = si_arrayMakeReserve(alloc[SC_MAIN], sizeof(scTokenStruct), 2);
+										si_arrayPush(&action.values, key);
 
-								entry->value = key;
-								global_scope.funcsLen += 1;
-							}
-							else {
-								scIdentifierKey* key = entry->value;
-								SI_ASSERT(key->type == SC_IDENTIFIER_KEY_FUNC);
-								func = (scFunction*)key->identifier;
-							}
+										scPunctuator punc = sc_actionAddValues(&lex, &action);
+										si_arrayPush(&curFunc->code, action);
 
-							paramLoop: {
-								res = silex_lexerTokenGet(&lex);
+										switch (punc) {
+											case ',': case ';': break;
+											default: SI_PANIC_MSG("Expression should end with a semicolin or continued via a comma punctuator.");
+										}
+										break;
+									}
+									case SILEX_OPERATOR_MINUS_ASSIGN: {
+										action.type = SC_ACTION_VAR_SUB;
+										action.values = si_arrayMakeReserve(alloc[SC_MAIN], sizeof(scTokenStruct), 2);
+										si_arrayPush(&action.values, key);
 
-								scType type = sc_typeGet(&lex, funcScope);
-								SI_ASSERT(type.size != -1 && res && lex.type == SILEX_TOKEN_IDENTIFIER);
-								u64 hash = lex.token.identifier.hash;
+										scPunctuator punc = sc_actionAddValues(&lex, &action);
+										si_arrayPush(&curFunc->code, action);
 
-								if (!funcIsNew) {
-									scType* oldType = &func->paramTypes[paramsLen];
-									SI_ASSERT(sc_typeCmp(&type, oldType));
-								}
-								else {
-									scIdentifierKey* key = si_malloc(alloc[SC_MAIN], sizeof(scIdentifierKey) + sizeof(scVariable));
-									key->type = SC_IDENTIFIER_KEY_VAR;
-									key->rank = funcScope->rank;
+										switch (punc) {
+											case ',': case ';': break;
+											default: SI_PANIC_MSG("Expression should end with a semicolin or continued via a comma punctuator.");
+										}
+										break;
+									}
 
-									scVariable* pVar = (scVariable*)key->identifier;
-									pVar->type = type;
-									pVar->init = nil;
-
-									siHashEntry* param = si_hashtableSetWithHash(funcScope->identifiers, hash, key, &res);
-									SI_ASSERT(res);
-
-									params[paramsLen] = param - funcScope->identifiers;
-									paramsLen += 1;
-								}
-
-								do {
-									res = silex_lexerTokenGet(&lex);
-									SI_ASSERT(res);
-								} while (lex.type != SILEX_TOKEN_PUNCTUATOR);
-								scPunctuator punc = lex.token.punctuator;
-
-								switch (punc) {
-									case ',': goto paramLoop;
-									case ')': break;
 									default: SI_PANIC();
 								}
+								break;
 							}
+							default: SI_PANIC();
+						}
+						break;
+					}
+					default: SI_PANIC();
+				}
 
-							res = silex_lexerTokenGet(&lex);
-							SI_ASSERT(res && lex.type == SILEX_TOKEN_PUNCTUATOR);
 
-							if (funcIsNew) {
-								func->paramLen = paramsLen;
-								func->paramVars = si_mallocArray(alloc[SC_MAIN], u32, paramsLen);
-								func->paramTypes = si_mallocArray(alloc[SC_MAIN], scType, paramsLen);
-							}
 
-							switch (lex.token.punctuator) {
-								case '{': {
-									curFunc = func;
-									scope = funcScope;
+				break;
+			}
+			case SILEX_TOKEN_KEYWORD: {
+				keyword = lex.token.keyword;
+				SI_STOPIF(!silex_keywordIsType(keyword), goto keyword_section);
 
-									for_range (i, 0, paramsLen * funcIsNew) {
-										usize index = params[i];
-										scIdentifierKey* key = funcScope->identifiers[index].value;
+				baseType = sc_typeGetFromKeyword(keyword);
+type_section:
+				SI_ASSERT(commaMode == false);
+				scType type = sc_typeMake(&lex, baseType, keyword);
+type_section_start:
+				SI_ASSERT(lex.type == SILEX_TOKEN_IDENTIFIER);
+				u64 name = lex.token.identifier.hash;
 
-										func->paramTypes[i] = ((scVariable*)key->identifier)->type;
-										func->paramVars[i] = index;
-										funcScope->varsLen += 1;
-									}
+				res = silex_lexerTokenGet(&lex);
+				SI_ASSERT(res && lex.type == SILEX_TOKEN_PUNCTUATOR);
 
-									break;
-								}
-								case ';': {
-									for_range (i, 0, paramsLen) {
-										usize index = params[i];
-										scIdentifierKey* key = funcScope->identifiers[index].value;
+				switch (lex.token.punctuator) {
+					case '(': {
+						SI_ASSERT(curFunc == nil && commaMode == false);
 
-										func->paramTypes[i] = ((scVariable*)key->identifier)->type;
-										func->paramVars[i] = index;
-										key->rank = UINT16_MAX;
-									}
-									break;
-								}
-								default: SI_PANIC_MSG("Cannot use this punctuator after a function declaration");
-							}
+						scFunction* func;
+						scInfoTable* funcScope;
 
-							if (name == hash_main) {
-								sc_functionValidateMain(func);
-								global_scope.mainFuncID = func - global_scope.funcs;
-								hash_main = 0;
-							}
-							break;
+						u32 params[128];
+						usize paramsLen = 0;
+
+						b32 res, funcIsNew;
+						/* TODO(EimaMei): Atpažinti K&R apibrėžtis ir nepa-
+						 * vadintas deklaracijas. */
+						siHashEntry* entry;
+
+						funcScope = si_mallocItem(alloc[SC_SCOPE], scInfoTable);
+						*funcScope = *scope;
+						funcScope->parent = scope;
+						funcScope->rank = 1;
+
+						entry = si_hashtableSetWithHash(global_scope.identifiers, name, nil, &funcIsNew);
+						if (funcIsNew) {
+							scIdentifierKey* key = si_malloc(alloc[SC_MAIN], sizeof(scIdentifierKey) + sizeof(scFunction));
+							key->type = SC_IDENTIFIER_KEY_FUNC;
+							/* key->rank = scope->rank; */
+
+							func = (scFunction*)key->identifier;
+							func->type = type;
+							func->name = name;
+							func->code = si_arrayMakeReserve(alloc[SC_MAIN], sizeof(scAction), 0);
+
+							entry->value = key;
+							global_scope.funcsLen += 1;
+						}
+						else {
+							scIdentifierKey* key = entry->value;
+							SI_ASSERT(key->type == SC_IDENTIFIER_KEY_FUNC);
+							func = (scFunction*)key->identifier;
 						}
 
-						case '=': {
-							scIdentifierKey* key = sc_identifierKeyGet(scope, name, SC_IDENTIFIER_KEY_VAR);
-							scVariable* pVar = (scVariable*)key->identifier;
-							pVar->type = type;
+						paramLoop: {
+							res = silex_lexerTokenGet(&lex);
 
-							scAction action;
-							action.type = SC_ACTION_VAR_ASSIGN;
-							action.values = si_arrayMakeReserve(alloc[SC_MAIN], sizeof(scTokenStruct), 2);
-							si_arrayPush(&action.values, key);
+							scType type = sc_typeGetAndMake(&lex, funcScope);
+							SI_ASSERT(res && lex.type == SILEX_TOKEN_IDENTIFIER);
+							u64 hash = lex.token.identifier.hash;
 
-							scPunctuator punc = sc_actionAddValues(&lex, &action);
-							if (curFunc == nil) {
-								SI_PANIC();
+							if (!funcIsNew) {
+								scType* oldType = &func->paramTypes[paramsLen];
+								SI_ASSERT(sc_typeCmp(&type, oldType));
+							}
+							else {
+								scIdentifierKey* key = si_malloc(alloc[SC_MAIN], sizeof(scIdentifierKey) + sizeof(scVariable));
+								key->type = SC_IDENTIFIER_KEY_VAR;
+								key->rank = funcScope->rank;
+
+								scVariable* pVar = (scVariable*)key->identifier;
+								pVar->type = type;
+								pVar->init = nil;
+
+								siHashEntry* param = si_hashtableSetWithHash(funcScope->identifiers, hash, key, &res);
+								SI_ASSERT(res);
+
+								params[paramsLen] = param - funcScope->identifiers;
+								paramsLen += 1;
 							}
 
-							si_arrayPush(&curFunc->code, action);
-							scope->varsLen += 1;
+							do {
+								res = silex_lexerTokenGet(&lex);
+								SI_ASSERT(res);
+							} while (lex.type != SILEX_TOKEN_PUNCTUATOR);
+							scPunctuator punc = lex.token.punctuator;
 
-							if (punc == ',') {
+							switch (punc) {
+								case ',': goto paramLoop;
+								case ')': break;
+								default: SI_PANIC();
+							}
+						}
+
+						res = silex_lexerTokenGet(&lex);
+						SI_ASSERT(res && lex.type == SILEX_TOKEN_PUNCTUATOR);
+
+						if (funcIsNew) {
+							func->paramLen = paramsLen;
+							func->paramVars = si_mallocArray(alloc[SC_MAIN], u32, paramsLen);
+							func->paramTypes = si_mallocArray(alloc[SC_MAIN], scType, paramsLen);
+						}
+
+						switch (lex.token.punctuator) {
+							case '{': {
+								curFunc = func;
+								scope = funcScope;
+
+								for_range (i, 0, paramsLen * funcIsNew) {
+									usize index = params[i];
+									scIdentifierKey* key = funcScope->identifiers[index].value;
+
+									func->paramTypes[i] = ((scVariable*)key->identifier)->type;
+									func->paramVars[i] = index;
+									funcScope->varsLen += 1;
+								}
+
+								break;
+							}
+							case ';': {
+								for_range (i, 0, paramsLen) {
+									usize index = params[i];
+									scIdentifierKey* key = funcScope->identifiers[index].value;
+
+									func->paramTypes[i] = ((scVariable*)key->identifier)->type;
+									func->paramVars[i] = index;
+									key->rank = UINT16_MAX;
+								}
+								break;
+							}
+							default: SI_PANIC_MSG("Cannot use this punctuator after a function declaration");
+						}
+
+						if (name == hash_main) {
+							sc_functionValidateMain(func);
+							global_scope.mainFuncID = func - global_scope.funcs;
+							hash_main = 0;
+						}
+						break;
+					}
+
+					case '=': {
+						scIdentifierKey* key = sc_identifierKeyGet(scope, name, SC_IDENTIFIER_KEY_VAR);
+						scVariable* pVar = (scVariable*)key->identifier;
+						pVar->type = type;
+
+						action.type = SC_ACTION_VAR_ASSIGN;
+						action.values = si_arrayMakeReserve(alloc[SC_MAIN], sizeof(scTokenStruct), 2);
+						si_arrayPush(&action.values, key);
+
+						scPunctuator punc = sc_actionAddValues(&lex, &action);
+						if (curFunc == nil) {
+							SI_PANIC();
+						}
+
+						si_arrayPush(&curFunc->code, action);
+						scope->varsLen += 1;
+
+						switch (punc) {
+							case ',':
 								if (type.ptr) {
 									type = *type.ptr;
 								}
-								isCreatingVar = true;
+								commaMode = true;
 								res = silex_lexerTokenGet(&lex);
-								goto start;
-							}
-							break;
+								goto type_section_start;
+							case ';': break;
+							default: SI_PANIC_MSG("Expression should end with a semicolin or continued via a comma punctuator.");
 						}
 
-						case ';':
-							si_printf("Found a variable that exists.\n");
-							break;
-						default: si_printf("%c\n", lex.token.punctuator); SI_PANIC();
+						break;
 					}
 
-					break;
+					case ';':
+						si_printf("Found a variable that exists.\n");
+						break;
+					default: si_printf("%c\n", lex.token.punctuator); SI_PANIC();
 				}
-				else if (type.size == -1) {
-					continue;
-				}
+				continue;
 
+keyword_section:
 				switch (lex.token.keyword) {
 					case SILEX_KEYWORD_RETURN: {
 						scAction action;
@@ -798,17 +1002,15 @@ start:
 					case SILEX_KEYWORD_TYPEDEF: {
 						scType type;
 						u64 name;
-						b32 res = silex_lexerTokenGet(&lex);
-						SI_ASSERT(res && lex.type == SILEX_TOKEN_KEYWORD);
+						res = silex_lexerTokenGet(&lex);
+						SI_ASSERT(res);
 
-						type = sc_typeGet(&lex, scope);
-						SI_ASSERT(type.size != -1);
-
-						SI_ASSERT(res && lex.type == SILEX_TOKEN_IDENTIFIER);
+						type = sc_typeGetAndMake(&lex, scope);
+						SI_ASSERT(type.size != -2);
+						SI_ASSERT(lex.type == SILEX_TOKEN_IDENTIFIER);
 						name = lex.token.identifier.hash;
 
 						scIdentifierKey* key = sc_identifierKeyGet(scope, name, SC_IDENTIFIER_KEY_TYPE);
-
 						scType* typedefType = (scType*)key->identifier;
 						*typedefType = type;
 
@@ -819,6 +1021,7 @@ start:
 					}
 					default: SI_PANIC();
 				}
+
 				break;
 			}
 
@@ -927,22 +1130,9 @@ start:
 				break;
 			}
 
-			case SC_ASM_LD_R32_M32: {
-				x86Register reg = sc_x86RegisterConvert(&x86, instruction->dst);
-				sc_x86Opcode(
-					&x86, X86_MOV_R32_RM32, reg, instruction->src,
-					X86_CFG_RMB | X86_CFG_DST_R | X86_CFG_SRC_M
-				);
-				break;
-			}
+			X86_ASM_TEMPLATE_R_M(&x86, SC_ASM_LD_R8_M8, X86_MOV_R8_RM8, instruction)
+			X86_ASM_TEMPLATE_M_I(&x86, SC_ASM_LD_M8_I8, X86_MOV_RM8_I8, instruction)
 
-			case SC_ASM_LD_M32_I32: {
-				sc_x86Opcode(
-					&x86, X86_MOV_RM32_I32, instruction->dst, instruction->src,
-					X86_CFG_RMB | X86_CFG_ID | X86_CFG_DST_M
-				);
-				break;
-			}
 			case SC_ASM_LD_M32_M32:
 				x86_OP_M32_M32(&x86, instruction, X86_MOV_RM32_R32);
 				break;
@@ -982,8 +1172,6 @@ start:
 				);
 				break;
 			}
-
-
 
 			case SC_ASM_ADD_M32_I32: {
 				sc_x86Opcode(
@@ -1034,6 +1222,7 @@ start:
 				break;
 			}
 
+			case SC_ASM_RET_M8: case SC_ASM_RET_M16:
 			case SC_ASM_RET_M32: {
 				sc_x86Opcode(
 					&x86, X86_MOV_R32_RM32, RAX, instruction->src,
