@@ -619,7 +619,7 @@ start:
 
 					switch (lex.token.punctuator) {
 						case '(': {
-							SI_ASSERT(isCreatingVar == false);
+							SI_ASSERT(curFunc == nil && isCreatingVar == false);
 
 							scFunction* func;
 							scInfoTable* funcScope;
@@ -660,8 +660,8 @@ start:
 							paramLoop: {
 								res = silex_lexerTokenGet(&lex);
 
-								scType type = sc_typeGet(&lex, scope);
-								SI_ASSERT(res && lex.type == SILEX_TOKEN_IDENTIFIER);
+								scType type = sc_typeGet(&lex, funcScope);
+								SI_ASSERT(type.size != -1 && res && lex.type == SILEX_TOKEN_IDENTIFIER);
 								u64 hash = lex.token.identifier.hash;
 
 								if (!funcIsNew) {

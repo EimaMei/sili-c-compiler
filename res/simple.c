@@ -1,12 +1,14 @@
 typedef int i32;
+typedef char* cstring;
 
-int func(int x);
+i32 func(i32 x);
 
 
-int main(int argc, char** argv) {
+i32 main(i32 argc, cstring* argv) {
 	/* int x = -222 + 2 + argc + -2 + argc + argc + argc + argc + 2 + 222; */
 	i32 y = 50 + 50 + argc;
-	return y;
+	int x = argc;
+	return y + x;
 }
 /*
 

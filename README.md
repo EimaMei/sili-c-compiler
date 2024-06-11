@@ -66,7 +66,7 @@ This section isn't meant to taken 100% seriously, there are a lot of other compo
 - [ ] `if` statements
 - [ ] `do` statements
 - [ ] `switch` statements 
-- [ ] `typedef` (NOTE: Implemented for `int`, crashes when it's used as a return type)
+- [x] `typedef`
 - [x] `_start` entrypoint for x86-64 Linux.
 
 # Credits (for fun)

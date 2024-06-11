@@ -497,18 +497,19 @@ num:
 			return true;
 		}
 
+		/* TODO(EimaMei): Reikia apdoroti atvejį, kai žvaigždutės simbolis
+		yra naudojamas kaip daugybos, o ne skyrybos ženklu. */
 		case '*':
 			lexer->curData = pLetter + 1;
 
 			if (lexer->type == SILEX_TOKEN_KEYWORD) {
 				b32 valid = silex_keywordIsType(lexer->token.keyword);
 				SI_ASSERT(valid);
-
-				lexer->__state = 0;
-				lexer->type = SILEX_TOKEN_PUNCTUATOR;
-				lexer->token.punctuator = '*';
 			}
 
+			lexer->__state = 0;
+			lexer->type = SILEX_TOKEN_PUNCTUATOR;
+			lexer->token.punctuator = '*';
 			return true;
 
 		case '(': case ')': case '[': case ']': case '{': case '}': case ';': case '=':

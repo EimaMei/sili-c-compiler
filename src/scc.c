@@ -28,7 +28,7 @@ scType sc_typeGet(scLexer* lex, scInfoTable* scope) {
 	else if (lex->type == SILEX_TOKEN_IDENTIFIER) {
 		scIdentifierKey* key = si_hashtableGetWithHash(scope->identifiers, lex->token.identifier.hash);
 		SI_STOPIF(
-			key == nil || key->type != SC_IDENTIFIER_KEY_TYPE || !(key->rank < scope->rank),
+			key == nil || key->type != SC_IDENTIFIER_KEY_TYPE || !(key->rank <= scope->rank),
 			return (scType){.size = -1}
 		);
 		baseType = (scType*)key->identifier;
@@ -39,6 +39,7 @@ scType sc_typeGet(scLexer* lex, scInfoTable* scope) {
 
 	b32 signedModifier = false;
 	b32 res;
+	b32 hasSetPtr = false;
 retry:
 	res = silex_lexerTokenGet(lex);
 	SI_ASSERT(res);
@@ -48,9 +49,10 @@ retry:
 			scPunctuator punct = lex->token.punctuator;
 			SI_ASSERT(punct == '*');
 
-			if (type.ptrCount == 0) {
+			if (!hasSetPtr) {
 				type.ptr = baseType;
 				type.size = sizeof_SIZE_T;
+				hasSetPtr = true;
 			}
 			type.ptrCount += 1;
 			goto retry;
