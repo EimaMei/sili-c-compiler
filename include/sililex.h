@@ -419,7 +419,7 @@ back:
 			}
 			while (si_charIsSpace(*pLetter)) { pLetter += 1; }
 
-			if ((lexer->__state & SC__STATE_NUM_EXISTS) == 0 && si_charIsAlphanumeric(*pLetter)) {
+			if ((lexer->__state & SC__STATE_NUM_EXISTS) == 0 && si_charIsDigit(*pLetter)) {
 				lexer->__state |= SC__STATE_NUM_EXISTS
 								| (SC__STATE_NEGATIVE * (*ogChar == '-'));
 				goto num;

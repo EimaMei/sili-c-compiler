@@ -17,10 +17,9 @@ i32 func(i32 x);
 
 i32 main(i32 argc, cstring* argv) {
 	/* int x = -222 + 2 + argc + -2 + argc + argc + argc + argc + 2 + 222; */
-	u32 x = 234;
-	x += argc + 2;
+	u32 x = -argc;
+	x += 2;
 	x++;
-	x--;
 	return x;
 }
 

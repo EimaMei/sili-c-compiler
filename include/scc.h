@@ -36,6 +36,9 @@ typedef SI_ENUM(u32, scActionType) {
 	SC_ACTION_VAR_SUB,
 	SC_ACTION_VAR_MUL,
 	SC_ACTION_VAR_DIV,
+
+	SC_ACTION_NEG,
+
 	SC_ACTION_RETURN,
 };
 typedef struct {
@@ -236,6 +239,16 @@ typedef SI_ENUM(u32, scAsmType) {
 	SC_ASM_SUB_M64_M64,
 
 
+	SC_ASM_NEG_R8,
+	SC_ASM_NEG_R16,
+	SC_ASM_NEG_R32,
+	SC_ASM_NEG_R64,
+
+	SC_ASM_NEG_M8,
+	SC_ASM_NEG_M16,
+	SC_ASM_NEG_M32,
+	SC_ASM_NEG_M64,
+
 
 	SC_ASM_CALL,
 
@@ -335,8 +348,9 @@ void sc_constantArithmetic(scConstant* constant, scOperator operator, scConstant
 scPunctuator sc_actionAddValues(scLexer* lex, scAction* action);
 
 /* */
-#define sc_actionEvaluate(action, node) sc_actionEvaluateEx(action, node, 0)
-void sc_actionEvaluateEx(scAction* action, scAstNode* node, usize i);
+#define sc_astNodeMake(ast, type, key, action) sc_astNodeMakeEx(ast, type, key, action, 0)
+scAstNode* sc_astNodeMakeEx(scAstNode* ast, scAstNodeType type, scIdentifierKey* key, siArray(scAction) action,
+		usize i);
 
 /* */
 scVariable* sc_variableGet(scInfoTable* scope, u64 hash, i32* res);

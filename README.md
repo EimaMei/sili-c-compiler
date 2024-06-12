@@ -19,9 +19,11 @@ This section isn't meant to taken 100% seriously, there are a lot of other compo
 - [ ] pointers
 - [ ] structures
 - [ ] unions
+- [ ] `(` and `)` usage
+- [ ] Casting
 - [ ] return:
-    - [+] 8-bit, 16-bit returns
-    - [+] 32-bit returns
+    - [x] 8-bit, 16-bit returns
+    - [x] 32-bit returns
     - [ ] 64-bit returns
     - [ ] 128-bit, 256-bit, etc returns
 - [ ] functions:
@@ -31,8 +33,8 @@ This section isn't meant to taken 100% seriously, there are a lot of other compo
     - [x] Function declarations
     - [ ] Function calls
 - [ ] arithmetic operators:
-    - [x] `+` add (NOTE: Can't use in front of variables)
-    - [x] `-` sub (NOTE: Can't use in front of variables)
+    - [x] `+` add (including in front of variables)
+    - [x] `-` sub (including in front of variables)
     - [ ] `*` mul
     - [ ] `/` div
     - [ ] `%` mod
@@ -57,13 +59,13 @@ This section isn't meant to taken 100% seriously, there are a lot of other compo
     - [ ] `!` NOT
 - [ ] `=` assign operator
 - [ ] compound operators:
-    - [ ] `++` add one:
-        - [ ] `++x` front
-        - [+] `x++` back
-    - [ ] `--` sub one:
-        - [ ] `--x` front
-        - [+] `x--` back
-    - [+] `+=` add and assign
+    - [x] `++` add one:
+        - [x] `++x` front
+        - [x] `x++` back
+    - [x] `--` sub one:
+        - [x] `--x` front
+        - [x] `x--` back
+    - [x] `+=` add and assign
     - [ ] `-=` sub and assign (NOTE: Works for non-binary arguments, binary arguments however are broken)
     - [ ] `*=` mul and assign
     - [ ] `/=` div and assign
@@ -83,5 +85,6 @@ This section isn't meant to taken 100% seriously, there are a lot of other compo
 - Fix `si_realloc` for this compiler
 
 # Credits (for fun)
-(Intel x86 Opcode Table and Reference)[https://shell-storm.org/x86doc/] - a good source for checking the list of valid opcodes on x86-64 (don't even try to use the official Intel manual).
-(Online Assembler and Disassembler)[https://shell-storm.org/online/Online-Assembler-and-Disassembler/] - an online disassembler to easily check if the assembly output is correct.
+[Intel x86 Opcode Table and Reference](https://shell-storm.org/x86doc/) - a good source for checking the list of valid opcodes on x86-64 (don't even try to use the official Intel manual).
+[Online Assembler and Disassembler](https://shell-storm.org/online/Online-Assembler-and-Disassembler/) - an online disassembler to easily check if the assembly output is correct.
+

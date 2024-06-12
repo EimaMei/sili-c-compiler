@@ -264,53 +264,39 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 
 	for_range (i, 0, si_arrayLen(func->code)) {
 		scAction* action = &func->code[i];
-		scAstNode node;
 
 		switch (action->type) {
 			case SC_ACTION_VAR_ASSIGN: {
 				scIdentifierKey* key = *si_cast(scIdentifierKey**, &action->values[0]);
 				scVariable* var = (scVariable*)key->identifier;
 
-				node.type = SC_AST_VAR_MAKE;
-				node.key = key;
-
-				sc_actionEvaluateEx(action, &node, 1);
-				var->init = node.init;
+				scAstNode* node = sc_astNodeMakeEx(ast, SC_AST_VAR_MAKE, key, action, 1);
+				var->init = node->init;
 				break;
 			}
 			case SC_ACTION_VAR_ADD: {
 				scIdentifierKey* key = *si_cast(scIdentifierKey**, &action->values[0]);
 				scVariable* var = (scVariable*)key->identifier;
 
-				node.type = SC_AST_VAR_ADD;
-				node.key = key;
-
-				sc_actionEvaluateEx(action, &node, 1);
-				var->init = node.init;
+				scAstNode* node = sc_astNodeMakeEx(ast, SC_AST_VAR_ADD, key, action, 1);
+				var->init = node->init;
 				break;
 			}
 			case SC_ACTION_VAR_SUB: {
 				scIdentifierKey* key = *si_cast(scIdentifierKey**, &action->values[0]);
 				scVariable* var = (scVariable*)key->identifier;
 
-				node.type = SC_AST_VAR_SUB;
-				node.key = key;
-
-				sc_actionEvaluateEx(action, &node, 1);
-				var->init = node.init;
+				scAstNode* node = sc_astNodeMakeEx(ast, SC_AST_VAR_SUB, key, action, 1);
+				var->init = node->init;
 				break;
 			}
 
 			case SC_ACTION_RETURN: {
-				node.type = SC_AST_RETURN;
-				node.key = nil;
-				sc_actionEvaluate(action, &node);
+				sc_astNodeMakeEx(ast, SC_AST_RETURN, nil, action, 1);
 				break;
 			}
 			default: SI_PANIC();
 		}
-
-		si_arrayPush(&ast, node);
 	}
 	SI_LOG("== scAction -> scAst complete  ==\n");
 
@@ -558,6 +544,29 @@ scGlobalInfoTable global_scope;
 u64 hash_main;
 
 
+void sc_actionMakePlusPlus(scActionType actionType,  scLexer* lex, scIdentifierKey* key, scFunction* curFunc) {
+	scAction action;
+	action.type = actionType;
+	action.values = si_arrayMakeReserve(alloc[SC_MAIN], sizeof(scTokenStruct), 2);
+	si_arrayPush(&action.values, key);
+
+	scTokenStruct* t = &action.values[1];
+	t->type = SILEX_TOKEN_CONSTANT;
+	t->token.constant.type = SILEX_CONSTANT_NUM_SIGNED;
+	t->token.constant.value.integer = 1;
+	SI_ARRAY_HEADER(action.values)->len = 2;
+
+	b32 res = silex_lexerTokenGet(lex);
+	SI_ASSERT(res && lex->type == SILEX_TOKEN_PUNCTUATOR);
+	si_arrayPush(&curFunc->code, action);
+
+	switch (lex->token.punctuator) {
+		case ',': case ';': break;
+		default: SI_PANIC_MSG("Expression should end with a semicolin or continued via a comma punctuator.");
+	}
+}
+
+
 int main(void) {
 #if 0
 	cstring keywords[] = {
@@ -721,48 +730,12 @@ int main(void) {
 						switch (lex.type) {
 							case SILEX_TOKEN_OPERATOR: {
 								switch (lex.token.operator) {
-									case SILEX_OPERATOR_PLUS_PLUS: {
-										action.type = SC_ACTION_VAR_ADD;
-										action.values = si_arrayMakeReserve(alloc[SC_MAIN], sizeof(scTokenStruct), 2);
-										si_arrayPush(&action.values, key);
-
-										scTokenStruct* t = &action.values[1];
-										t->type = SILEX_TOKEN_CONSTANT;
-										t->token.constant.type = SILEX_CONSTANT_NUM_SIGNED;
-										t->token.constant.value.integer = 1;
-										SI_ARRAY_HEADER(action.values)->len = 2;
-
-										b32 res = silex_lexerTokenGet(&lex);
-										SI_ASSERT(res && lex.type == SILEX_TOKEN_PUNCTUATOR);
-										si_arrayPush(&curFunc->code, action);
-
-										switch (lex.token.punctuator) {
-											case ',': case ';': break;
-											default: SI_PANIC_MSG("Expression should end with a semicolin or continued via a comma punctuator.");
-										}
+									case SILEX_OPERATOR_PLUS_PLUS:
+										sc_actionMakePlusPlus(SC_ACTION_VAR_ADD, &lex, key, curFunc);
 										break;
-									}
-									case SILEX_OPERATOR_MINUS_MINUS: {
-										action.type = SC_ACTION_VAR_SUB;
-										action.values = si_arrayMakeReserve(alloc[SC_MAIN], sizeof(scTokenStruct), 2);
-										si_arrayPush(&action.values, key);
-
-										scTokenStruct* t = &action.values[1];
-										t->type = SILEX_TOKEN_CONSTANT;
-										t->token.constant.type = SILEX_CONSTANT_NUM_SIGNED;
-										t->token.constant.value.integer = 1;
-										SI_ARRAY_HEADER(action.values)->len = 2;
-
-										b32 res = silex_lexerTokenGet(&lex);
-										SI_ASSERT(res && lex.type == SILEX_TOKEN_PUNCTUATOR);
-										si_arrayPush(&curFunc->code, action);
-
-										switch (lex.token.punctuator) {
-											case ',': case ';': break;
-											default: SI_PANIC_MSG("Expression should end with a semicolin or continued via a comma punctuator.");
-										}
+									case SILEX_OPERATOR_MINUS_MINUS:
+										sc_actionMakePlusPlus(SC_ACTION_VAR_SUB, &lex, key, curFunc);
 										break;
-									}
 									case SILEX_OPERATOR_PLUS_ASSIGN: {
 										action.type = SC_ACTION_VAR_ADD;
 										action.values = si_arrayMakeReserve(alloc[SC_MAIN], sizeof(scTokenStruct), 2);
@@ -802,9 +775,6 @@ int main(void) {
 					}
 					default: SI_PANIC();
 				}
-
-
-
 				break;
 			}
 			case SILEX_TOKEN_KEYWORD: {
@@ -1059,6 +1029,50 @@ keyword_section:
 					}
 				}
 				break;
+			}
+			case SILEX_TOKEN_OPERATOR: {
+				switch (lex.token.operator) {
+					case SILEX_OPERATOR_PLUS_PLUS: {
+						res = silex_lexerTokenGet(&lex);
+						SI_ASSERT_MSG(res && lex.type == SILEX_TOKEN_IDENTIFIER, "Expected an identifier");
+
+						scString identifier = lex.token.identifier;
+						scIdentifierKey* key = si_hashtableGetWithHash(scope->identifiers, identifier.hash);
+
+						SI_ASSERT_FMT(
+							key != nil && key->rank <= scope->rank,
+							"Variable '%*s' doesn't exist", identifier.len, lex.curData - identifier.len
+						);
+						SI_ASSERT_FMT(
+							key->type == SC_IDENTIFIER_KEY_VAR,
+							"Identifier '%*s' is not a variable.", identifier.len, lex.curData - identifier.len
+						);
+
+						sc_actionMakePlusPlus(SC_ACTION_VAR_ADD, &lex, key, curFunc);
+						break;
+					}
+					case SILEX_OPERATOR_MINUS_MINUS: {
+						res = silex_lexerTokenGet(&lex);
+						SI_ASSERT_MSG(res && lex.type == SILEX_TOKEN_IDENTIFIER, "Expected an identifier");
+
+						scString identifier = lex.token.identifier;
+						scIdentifierKey* key = si_hashtableGetWithHash(scope->identifiers, identifier.hash);
+
+						SI_ASSERT_FMT(
+							key != nil && key->rank <= scope->rank,
+							"Variable '%*s' doesn't exist", identifier.len, lex.curData - identifier.len
+						);
+						SI_ASSERT_FMT(
+							key->type == SC_IDENTIFIER_KEY_VAR,
+							"Identifier '%*s' is not a variable.", identifier.len, lex.curData - identifier.len
+						);
+
+						sc_actionMakePlusPlus(SC_ACTION_VAR_SUB, &lex, key, curFunc);
+						break;
+					}
+
+					default: SI_PANIC();
+				}
 			}
 		}
 	}
