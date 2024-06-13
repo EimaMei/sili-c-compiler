@@ -175,6 +175,20 @@ void sc_astNodeToAsm(scInfoTable* scope, scAsm* instructions, scOperator assignm
 			si_arrayPush(&instructions, asm);
 			break;
 		}
+
+		case SC_INIT_UNARY: {
+			switch (init->value.unary.operator) {
+				case SILEX_OPERATOR_MINUS: {
+					scInitializer* nextInit = init->next;
+
+					SI_PANIC();
+
+					break;
+				}
+			}
+			break;
+		}
+
 		case SC_INIT_BINARY: {
 			scTokenStruct* left, *right;
 start:
@@ -243,6 +257,7 @@ start:
 
 			break;
 		}
+		default: SI_PANIC();
 	}
 
 	init = init->next;
@@ -404,6 +419,7 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 
 					break;
 				}
+				case SC_INIT_UNARY:
 				case SC_INIT_CONSTANT: break;
 				default: SI_PANIC();
 			}

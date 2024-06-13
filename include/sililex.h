@@ -60,6 +60,12 @@ WARNING
 extern "C" {
 #endif
 
+
+#if !defined (SILEX_UNARY_CHAR_LIMIT)
+	#define SILEX_UNARY_CHAR_LIMIT (512)
+#endif
+
+
 #if defined(SILEX_USE_HASH)
 	#ifndef SILEX_HASH_TYPE
 		#define SILEX_HASH_TYPE u64
@@ -164,7 +170,8 @@ typedef SI_ENUM(u32, scOperator) {
 
 	SILEX_OPERATOR_PLUS_PLUS,
 	SILEX_OPERATOR_MINUS_MINUS,
-
+	SILEX_OPERATOR_TILDE,
+	SILEX_OPERATOR_EXCLAMATION_MARK,
 
 	SILEX_OPERATOR_PLUS_ASSIGN,
 	SILEX_OPERATOR_MINUS_ASSIGN
@@ -193,8 +200,7 @@ typedef union {
 typedef SI_ENUM(u32, __scTokenState) {
 	SC__STATE_UNSIGNED = SI_BIT(0),
 	SC__STATE_LONG = SI_BIT(1),
-	SC__STATE_NEGATIVE = SI_BIT(2),
-	SC__STATE_NUM_EXISTS = SI_BIT(3),
+	SC__STATE_NUM_EXISTS = SI_BIT(2)
 };
 
 typedef struct {
@@ -205,6 +211,7 @@ typedef struct {
 	scToken token;
 
 	scTokenError error;
+	u32 base;
 	__scTokenState __state;
 } scLexer;
 
@@ -252,8 +259,311 @@ b32 silex_lexerTokenGet(scLexer* lexer);
 
 #if defined(SILEX_IMPLEMENTATION)
 
+#define SC__UNARY_BIT_MINUS SI_BIT(0)
+#define SC__UNARY_BIT_TILDE   SI_BIT(1)
+#define SC__UNARY_BIT_EXCLAMATION   (SI_BIT(1) | SI_BIT(0))
 
 force_inline
+b32 si_charIsUnary(char x) {
+	return x == '-' || x == '!' || x == '~' || x == '+';
+}
+
+siIntern
+scKeyword silex__tokenIdToKeyword(u64 num);
+
+siIntern
+b32 silex__tokenizeConsantInt(scLexer* lexer, const char* pLetter, usize* unaryBitLen,
+		u64* unary);
+
+
+
+scLexer silex_lexerMake(cstring content, usize len) {
+	scLexer lexer = {0};
+	lexer.curData = content;
+	lexer.end = content + len;
+	lexer.base = 10;
+
+	return lexer;
+}
+
+
+b32 silex_lexerTokenGet(scLexer* lexer) {
+	SI_STOPIF(lexer->curData >= lexer->end, lexer->type = SILEX_TOKEN_EOF; return false);
+
+	const char* pLetter = lexer->curData;
+	/* NOTE(EimaMei): Kadangi C kalba labai kieta ir tikrai nepernelyg laisva,
+	 * yra leidžiama turėti belekiek vienviečių ženklų, kurio pradžia prasideda
+	 * nuo pirmosios leksemos ženklo. Kas 2 bitai 'unary'-oje yra reikšmė, nurodanti
+	 * negatyvo (0b01, -), bitinės papildomojo (0b10, ~) arba NE (0b11, !) operaciją. */
+	usize unaryBitLen = 0;
+	u64 unary[(SILEX_UNARY_CHAR_LIMIT) / (sizeof(u64) * 8 / 2)];
+	memset(unary, 0, sizeof(unary));
+
+start:
+	while (si_charIsSpace(*pLetter)) { pLetter += 1; }
+	SI_STOPIF(pLetter >= lexer->end, lexer->type = SILEX_TOKEN_EOF; return false);
+
+	if (SI_TO_U16(pLetter) == SI_TO_U16("/*")) {
+		pLetter += 2;
+back:
+		while (*pLetter != '*') {
+			pLetter += 1;
+		}
+		pLetter += 1;
+		SI_STOPIF(*pLetter != '/', pLetter += 1; goto back);
+		pLetter += 1;
+		goto start;
+	}
+
+#define SILEX_UNARY_ADD(unary, unaryBitLen, bit) \
+	do { \
+		SI_ASSERT(unaryBitLen < sizeof(unary) * 8); \
+		unary[unaryBitLen / 32u] |= (u64)(bit) << (unaryBitLen % 32u); \
+		unaryBitLen += 2; \
+	} while(0)
+
+	switch (*pLetter) {
+		default: {
+			if (si_charIsAlpha(*pLetter) || *pLetter == '_' || *(u8*)pLetter >= 128) {
+				SILEX_HASH_FUNC_INIT(hash);
+				const char* start = pLetter;
+
+				while (si_charIsAlphanumeric(*pLetter)) {
+					SILEX_HASH_FUNC(hash, *pLetter);
+					pLetter += 1;
+				}
+				lexer->curData = pLetter;
+				usize len = pLetter - start;
+
+				if (len <= 8) {
+					u64 stringInt = 0;
+					memcpy(&stringInt, start, len);
+
+					scKeyword keyword = silex__tokenIdToKeyword(stringInt);
+					if (keyword != SILEX_KEYWORD_NONE) {
+						lexer->type = SILEX_TOKEN_KEYWORD;
+						lexer->token.keyword = keyword;
+						return true;
+					}
+				}
+
+				lexer->__state = SC__STATE_NUM_EXISTS;
+				lexer->type = SILEX_TOKEN_IDENTIFIER;
+#ifndef SILEX_NO_LEN
+				lexer->token.identifier.len = len;
+#endif
+#ifndef SILEX_USE_HASH
+				lexer->token.identifier.text = start;
+#else
+				lexer->token.identifier.hash = hash;
+#endif
+
+				return true;
+			}
+			siFallthrough;
+		}
+
+		case '!': {
+			pLetter += 1;
+			while (si_charIsSpace(*pLetter)) { pLetter += 1; }
+			if ((lexer->__state & SC__STATE_NUM_EXISTS) == 0 && (si_charIsDigit(*pLetter) || si_charIsUnary(*pLetter))) {
+				SILEX_UNARY_ADD(unary, unaryBitLen, SC__UNARY_BIT_EXCLAMATION);
+				goto start;
+			}
+
+			lexer->__state = 0;
+			lexer->curData = pLetter;
+			lexer->type = SILEX_TOKEN_OPERATOR;
+			lexer->token.operator = SILEX_OPERATOR_EXCLAMATION_MARK;
+			return true;
+		}
+
+
+		case '~': {
+			pLetter += 1;
+			while (si_charIsSpace(*pLetter)) { pLetter += 1; }
+			if ((lexer->__state & SC__STATE_NUM_EXISTS) == 0 && (si_charIsDigit(*pLetter) || si_charIsUnary(*pLetter))) {
+				SILEX_UNARY_ADD(unary, unaryBitLen, SC__UNARY_BIT_TILDE);
+				goto start;
+			}
+
+			lexer->__state = 0;
+			lexer->curData = pLetter;
+			lexer->type = SILEX_TOKEN_OPERATOR;
+			lexer->token.operator = SILEX_OPERATOR_TILDE;
+			return true;
+		}
+
+		case '-': case '+': {
+			const char* ogChar = pLetter;
+			pLetter += 1;
+
+			if (*pLetter == *ogChar) {
+				lexer->curData = pLetter + 1;
+				lexer->type = SILEX_TOKEN_OPERATOR;
+				lexer->token.operator = SILEX_OPERATOR_PLUS_PLUS + (*ogChar == '-');
+				return true;
+			}
+			else if (*pLetter == '=') {
+				lexer->curData = pLetter + 1;
+				lexer->type = SILEX_TOKEN_OPERATOR;
+				lexer->token.operator = SILEX_OPERATOR_PLUS_ASSIGN + (*ogChar == '-');
+				return true;
+			}
+			while (si_charIsSpace(*pLetter)) { pLetter += 1; }
+
+			b32 isNeg = (*ogChar == '-');
+			if ((lexer->__state & SC__STATE_NUM_EXISTS) == 0 && (si_charIsDigit(*pLetter) || si_charIsUnary(*pLetter))) {
+				if (isNeg) {
+					SILEX_UNARY_ADD(unary, unaryBitLen, SC__UNARY_BIT_MINUS);
+				}
+				goto start;
+			}
+
+			lexer->__state = 0;
+			lexer->curData = pLetter;
+			lexer->type = SILEX_TOKEN_OPERATOR;
+			lexer->token.operator = SILEX_OPERATOR_PLUS + isNeg;
+			return true;
+		}
+
+
+		case '0': SI_PANIC();
+
+		case '1': case '2': case '3': case '4': case '5': case '6': case '7':
+		case '8': case '9': {
+			return silex__tokenizeConsantInt(lexer, pLetter, &unaryBitLen, unary);
+		}
+
+		/* TODO(EimaMei): Reikia apdoroti atvejį, kai žvaigždutės simbolis
+		yra naudojamas kaip daugybos, o ne skyrybos ženklu. */
+		case '*':
+			lexer->curData = pLetter + 1;
+
+			if (lexer->type == SILEX_TOKEN_KEYWORD) {
+				b32 valid = silex_keywordIsType(lexer->token.keyword);
+				SI_ASSERT(valid);
+			}
+
+			lexer->__state = 0;
+			lexer->type = SILEX_TOKEN_PUNCTUATOR;
+			lexer->token.punctuator = '*';
+			return true;
+
+		case '(': case ')': case '[': case ']': case '{': case '}': case ';': case '=':
+		case ',':
+			lexer->curData = pLetter + 1;
+
+			lexer->__state = 0;
+			lexer->type = SILEX_TOKEN_PUNCTUATOR;
+			lexer->token.punctuator = *pLetter;
+			return true;
+	}
+	SI_PANIC();
+
+	return false;
+}
+
+static
+b32 silex__tokenizeConsantInt(scLexer* lexer, const char* pLetter, usize* pUnaryBitLen,
+		u64* unary) {
+	u64 value = 0;
+	b32 running = true;
+	u32 base = lexer->base;
+
+	while (running) {
+		char x = si_charLower(*pLetter);
+
+		i32 digit = (x - '0');
+		if (si_between(digit, 0, base - 1)) {
+			value *= base;
+			value += digit;
+			pLetter += 1;
+			continue;
+		}
+
+		b32 hasSpace = si_charIsSpace(*pLetter);
+		if (hasSpace) {
+			pLetter += 1;
+			while (si_charIsSpace(*pLetter)) { pLetter += 1; }
+			x = *pLetter;
+		}
+
+		switch (x) {
+			case 'l': {
+				if (!hasSpace && (lexer->__state & SC__STATE_LONG) == 0) {
+					lexer->__state |= SC__STATE_LONG;
+					pLetter += 1;
+					continue;
+				}
+
+				lexer->curData = pLetter;
+				lexer->type = SILEX_TOKEN_INVALID;
+				lexer->error = SILEX_ERROR_SUFFIX_LONG;
+				return false;
+			}
+			case 'u': {
+				if (!hasSpace && (lexer->__state & SC__STATE_UNSIGNED) == 0) {
+					lexer->__state |= SC__STATE_UNSIGNED;
+					pLetter += 1;
+					continue;
+				}
+
+				lexer->curData = pLetter;
+				lexer->type = SILEX_TOKEN_INVALID;
+				lexer->error = SILEX_ERROR_SUFFIX_UNSIGNED;
+				return false;
+			}
+			default: {
+				running = false;
+				break;
+			}
+		}
+	}
+	lexer->curData = pLetter;
+	lexer->type = SILEX_TOKEN_CONSTANT;
+
+	scConstant* constant = &lexer->token.constant;
+
+	usize unaryBitLen = *pUnaryBitLen;
+	isize i = unaryBitLen;
+	si_printf("%i %i\n", i, i / 32u);
+	while (i > 0) {
+		u64* unaryByte = &unary[i / 32u];
+
+		u32 totalBitCount = i % 32u;
+		u32 bitCount = totalBitCount / 2u;
+
+		totalBitCount -= 2u;
+		u32 bits = (u64)(SI_BIT(0) | SI_BIT(1)) << totalBitCount;
+		for_range (j, 0, bitCount) {
+			u32 unaryBits = (*unaryByte & bits) >> (totalBitCount - j * 2u);
+
+			switch (unaryBits) {
+				case SC__UNARY_BIT_MINUS: value = -value; break;
+				case SC__UNARY_BIT_TILDE: value = ~value; break;
+				case SC__UNARY_BIT_EXCLAMATION:	  value = !value; break;
+			}
+			bits >>= 2;
+		}
+		*unaryByte = 0;
+		i -= 32;
+	}
+	*pUnaryBitLen = 0;
+
+	constant->value.integer = value;
+	constant->type = (lexer->__state & SC__STATE_UNSIGNED)
+		? SILEX_CONSTANT_NUM_UNSIGNED
+		: SILEX_CONSTANT_NUM_SIGNED;
+
+	lexer->__state = SC__STATE_NUM_EXISTS;
+	lexer->base = 10;
+
+	return true;
+}
+
+
+siIntern
 scKeyword silex__tokenIdToKeyword(u64 num) {
 
 #if 1
@@ -327,217 +637,6 @@ scKeyword silex__tokenIdToKeyword(u64 num) {
 	}
 
 	return SILEX_KEYWORD_NONE;
-}
-
-
-scLexer silex_lexerMake(cstring content, usize len) {
-	scLexer lexer = {0};
-	lexer.curData = content;
-	lexer.end = content + len;
-
-	return lexer;
-}
-
-
-b32 silex_lexerTokenGet(scLexer* lexer) {
-	SI_STOPIF(lexer->curData >= lexer->end, lexer->type = SILEX_TOKEN_EOF; return false);
-
-	const char* pLetter = lexer->curData;
-start:
-	while (si_charIsSpace(*pLetter)) { pLetter += 1; }
-	SI_STOPIF(pLetter >= lexer->end, lexer->type = SILEX_TOKEN_EOF; return false);
-
-	if (SI_TO_U16(pLetter) == SI_TO_U16("/*")) {
-		pLetter += 2;
-back:
-		while (*pLetter != '*') {
-			pLetter += 1;
-		}
-		pLetter += 1;
-		SI_STOPIF(*pLetter != '/', pLetter += 1; goto back);
-		pLetter += 1;
-		goto start;
-	}
-
-
-	switch (*pLetter) {
-		default: {
-			if (si_charIsAlpha(*pLetter) || *pLetter == '_' || *(u8*)pLetter >= 128) {
-				SILEX_HASH_FUNC_INIT(hash);
-				const char* start = pLetter;
-
-				while (si_charIsAlphanumeric(*pLetter)) {
-					SILEX_HASH_FUNC(hash, *pLetter);
-					pLetter += 1;
-				}
-				lexer->curData = pLetter;
-				usize len = pLetter - start;
-
-				if (len <= 8) {
-					u64 stringInt = 0;
-					memcpy(&stringInt, start, len);
-
-					scKeyword keyword = silex__tokenIdToKeyword(stringInt);
-					if (keyword != SILEX_KEYWORD_NONE) {
-						lexer->type = SILEX_TOKEN_KEYWORD;
-						lexer->token.keyword = keyword;
-						return true;
-					}
-				}
-
-				lexer->__state = SC__STATE_NUM_EXISTS;
-				lexer->type = SILEX_TOKEN_IDENTIFIER;
-#ifndef SILEX_NO_LEN
-				lexer->token.identifier.len = len;
-#endif
-#ifndef SILEX_USE_HASH
-				lexer->token.identifier.text = start;
-#else
-				lexer->token.identifier.hash = hash;
-#endif
-
-				return true;
-			}
-			siFallthrough;
-		}
-
-		case '-': case '+': {
-			const char* ogChar = pLetter;
-			pLetter += 1;
-
-			if (*pLetter == *ogChar) {
-				lexer->curData = pLetter + 1;
-				lexer->type = SILEX_TOKEN_OPERATOR;
-				lexer->token.operator = SILEX_OPERATOR_PLUS_PLUS + (*ogChar == '-');
-				return true;
-			}
-			else if (*pLetter == '=') {
-				lexer->curData = pLetter + 1;
-				lexer->type = SILEX_TOKEN_OPERATOR;
-				lexer->token.operator = SILEX_OPERATOR_PLUS_ASSIGN + (*ogChar == '-');
-				return true;
-			}
-			while (si_charIsSpace(*pLetter)) { pLetter += 1; }
-
-			if ((lexer->__state & SC__STATE_NUM_EXISTS) == 0 && si_charIsDigit(*pLetter)) {
-				lexer->__state |= SC__STATE_NUM_EXISTS
-								| (SC__STATE_NEGATIVE * (*ogChar == '-'));
-				goto num;
-			}
-
-			lexer->__state = 0;
-			lexer->curData = pLetter;
-			lexer->type = SILEX_TOKEN_OPERATOR;
-			lexer->token.operator = SILEX_OPERATOR_PLUS + (*ogChar == '-');
-			return true;
-		}
-
-
-		case '0': case '1': case '2': case '3': case '4': case '5': case '6': case '7':
-		case '8': case '9': {
-			lexer->__state = SC__STATE_NUM_EXISTS;
-			u64 value;
-			u32 base;
-num:
-			value = 0;
-			base = 10;
-			b32 running = true;
-
-			while (running) {
-				char x = si_charLower(*pLetter);
-
-				i32 digit = (x - '0');
-				if (si_between(digit, 0, base - 1)) {
-					value *= base;
-					value += digit;
-					pLetter += 1;
-					continue;
-				}
-
-				b32 hasSpace = si_charIsSpace(*pLetter);
-				if (hasSpace) {
-					pLetter += 1;
-					while (si_charIsSpace(*pLetter)) { pLetter += 1; }
-					x = *pLetter;
-				}
-
-				switch (x) {
-					case 'l': {
-						if (!hasSpace && (lexer->__state & SI_BIT(1)) == 0) {
-							lexer->__state |= SI_BIT(1);
-							pLetter += 1;
-							continue;
-						}
-
-						lexer->curData = pLetter;
-						lexer->type = SILEX_TOKEN_INVALID;
-						lexer->error = SILEX_ERROR_SUFFIX_LONG;
-						return false;
-					}
-					case 'u': {
-						if (!hasSpace && (lexer->__state & SI_BIT(0)) == 0) {
-							lexer->__state |= SI_BIT(0);
-							pLetter += 1;
-							continue;
-						}
-
-						lexer->curData = pLetter;
-						lexer->type = SILEX_TOKEN_INVALID;
-						lexer->error = SILEX_ERROR_SUFFIX_UNSIGNED;
-						return false;
-					}
-					default: {
-						running = false;
-						break;
-					}
-				}
-			}
-			lexer->curData = pLetter;
-			lexer->type = SILEX_TOKEN_CONSTANT;
-
-			scConstant* constant = &lexer->token.constant;
-			if (lexer->__state & SI_BIT(2)) {
-				value = -value;
-			}
-
-			constant->value.integer = value;
-			if (lexer->__state & SI_BIT(0)) {
-				constant->type = SILEX_CONSTANT_NUM_UNSIGNED;
-			}
-			else {
-				constant->type = SILEX_CONSTANT_NUM_SIGNED;
-			}
-
-			return true;
-		}
-
-		/* TODO(EimaMei): Reikia apdoroti atvejį, kai žvaigždutės simbolis
-		yra naudojamas kaip daugybos, o ne skyrybos ženklu. */
-		case '*':
-			lexer->curData = pLetter + 1;
-
-			if (lexer->type == SILEX_TOKEN_KEYWORD) {
-				b32 valid = silex_keywordIsType(lexer->token.keyword);
-				SI_ASSERT(valid);
-			}
-
-			lexer->__state = 0;
-			lexer->type = SILEX_TOKEN_PUNCTUATOR;
-			lexer->token.punctuator = '*';
-			return true;
-
-		case '(': case ')': case '[': case ']': case '{': case '}': case ';': case '=':
-		case ',':
-			lexer->curData = pLetter + 1;
-
-			lexer->__state = 0;
-			lexer->type = SILEX_TOKEN_PUNCTUATOR;
-			lexer->token.punctuator = *pLetter;
-			return true;
-	}
-	SI_PANIC();
-
-	return false;
 }
 
 #endif

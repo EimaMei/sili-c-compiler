@@ -201,9 +201,16 @@ scAstNode* sc_astNodeMakeEx(scAstNode* ast, scAstNodeType type, scIdentifierKey*
 	for ( ; i < si_arrayLen(action->values); i += 1) {
 		token1 = &action->values[i];
 		SI_ASSERT_NOT_NULL(token1);
-		SI_LOG_FMT("\t\taction->values[%i] = {.type = %i}; ", i, token1->type);
+		SI_LOG_FMT("\t\taction->values[%i] = {.type = %i};\n", i, token1->type);
 
 		token2 = si_arrayAt(action->values, i + 1);
+
+		if (token2 != nil) {
+			SI_LOG_FMT("\t\taction->values[%i] = {.type = %i}; ", i + 1, token2->type);
+		}
+		else {
+			SI_LOG_FMT("\t\taction->values[%i] = nil; ", i + 1);
+		}
 
 		scInitializer* init = si_mallocItem(alloc[SC_AST], scInitializer);
 		if (prevInit != nil) {
