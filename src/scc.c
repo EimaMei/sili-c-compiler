@@ -187,6 +187,8 @@ void sc_actionHandleBinary(scAction* action, scInitializer* init,
 
 scAstNode* sc_astNodeMakeEx(scAstNode* ast, scAstNodeType type, scIdentifierKey* key, siArray(scAction) action,
 		usize i) {
+	SI_ASSERT_NOT_NULL(ast);
+	SI_ASSERT_NOT_NULL(action);
 
 	scAstNode* node = si_arrayPush(&ast, 0);
 	node->type = type;
@@ -195,8 +197,12 @@ scAstNode* sc_astNodeMakeEx(scAstNode* ast, scAstNodeType type, scIdentifierKey*
 	scInitializer* prevInit = nil;
 	scTokenStruct* token1, *token2;
 
+	SI_LOG_FMT("\tsi_arrayLen(action->values) = %i\n", si_arrayLen(action->values));
 	for ( ; i < si_arrayLen(action->values); i += 1) {
 		token1 = &action->values[i];
+		SI_ASSERT_NOT_NULL(token1);
+		SI_LOG_FMT("\t\taction->values[%i] = {.type = %i}; ", i, token1->type);
+
 		token2 = si_arrayAt(action->values, i + 1);
 
 		scInitializer* init = si_mallocItem(alloc[SC_AST], scInitializer);
@@ -223,9 +229,10 @@ scAstNode* sc_astNodeMakeEx(scAstNode* ast, scAstNodeType type, scIdentifierKey*
 				if (init == node->init) { /* NOTE(EimaMei): Jei 'init' yra apibrėžimo pradžia. */
 					scTokenStruct* token3 = si_arrayAt(action->values, i + 2);
 					if (token3 == nil) {
-						SI_ASSERT(token2->type == SILEX_TOKEN_IDENTIFIER);
-						init->type = SC_INIT_IDENTIFIER;
-						init->value.identifier = token2->token.identifier.hash;
+						init->type = SC_INIT_UNARY;
+						init->value.unary.value = token2;
+						init->value.unary.operator = token1->token.operator;
+
 						i += 1;
 						break;
 					}
@@ -258,6 +265,8 @@ scAstNode* sc_astNodeMakeEx(scAstNode* ast, scAstNodeType type, scIdentifierKey*
 
 			default: SI_PANIC();
 		}
+
+		SI_LOG("[Complete]\n");
 	}
 
 	return node;

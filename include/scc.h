@@ -9,7 +9,8 @@
 typedef SI_ENUM(u32, scInitializerType) {
 	SC_INIT_BINARY = 1,
 	SC_INIT_CONSTANT,
-	SC_INIT_IDENTIFIER
+	SC_INIT_IDENTIFIER,
+	SC_INIT_UNARY,
 };
 
 typedef struct scInitializer {
@@ -22,6 +23,10 @@ typedef struct scInitializer {
 		} binary;
 		scConstant constant;
 		u64 identifier;
+		struct {
+			scOperator operator;
+			scTokenStruct* value;
+		} unary;
 	} value;
 
 	struct scInitializer* next;

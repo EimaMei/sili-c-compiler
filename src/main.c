@@ -292,7 +292,7 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 			}
 
 			case SC_ACTION_RETURN: {
-				sc_astNodeMakeEx(ast, SC_AST_RETURN, nil, action, 1);
+				sc_astNodeMake(ast, SC_AST_RETURN, nil, action);
 				break;
 			}
 			default: SI_PANIC();
@@ -441,9 +441,17 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 	}
 	SI_LOG("== Parameters -> scAsm complete  ==\n");
 
+	SI_LOG_FMT("si_arrayLen(ast) = %i\n", si_arrayLen(ast));
 	for_range (i, 0, si_arrayLen(ast)) {
 		scAstNode* node = &ast[i];
+		SI_ASSERT_NOT_NULL(node);
 
+		if (node->key) {
+			SI_LOG_FMT("\tscAst[%i] = {.type = %i, .node->key->type = %i, .init = %p}; ", i, node->type, node->key->type, node->init);
+		}
+		else {
+			SI_LOG_FMT("\tscAst[%i] = {.type = %i, .node->key = nil, .init = %p}; ", i, node->type, node->init);
+		}
 		switch (node->type) {
 			case SC_AST_VAR_MAKE: {
 				scVariable* var = (scVariable*)node->key->identifier;
@@ -491,6 +499,8 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 			}
 			default: SI_PANIC();
 		}
+
+		SI_LOG("[Complete]\n");
 	}
 	SI_LOG("== Parse complete  ==\n");
 }
@@ -961,7 +971,6 @@ type_section_start:
 keyword_section:
 				switch (lex.token.keyword) {
 					case SILEX_KEYWORD_RETURN: {
-						scAction action;
 						action.type = SC_ACTION_RETURN;
 						action.values = si_arrayMakeReserve(alloc[SC_MAIN], sizeof(scTokenStruct), 1);
 

@@ -32,9 +32,13 @@ This section isn't meant to taken 100% seriously, there are a lot of other compo
     - [x] Function implementations
     - [x] Function declarations
     - [ ] Function calls
+- [ ] unary operators:
+    - [ ] `+` technically nothing?
+    - [ ] `-` negation (NOTE: Doesn't work if the expression is not binary)
+    - [ ] `~` bitwise complement
 - [ ] arithmetic operators:
-    - [x] `+` add (including in front of variables)
-    - [x] `-` sub (including in front of variables)
+    - [x] `+` add
+    - [x] `-` sub
     - [ ] `*` mul
     - [ ] `/` div
     - [ ] `%` mod
@@ -85,6 +89,6 @@ This section isn't meant to taken 100% seriously, there are a lot of other compo
 - Fix `si_realloc` for this compiler
 
 # Credits (for fun)
+[ANSI C89/ISO C90 standard draft](https://web.archive.org/web/20200909074736if_/https://www.pdf-archive.com/2014/10/02/ansi-iso-9899-1990-1/ansi-iso-9899-1990-1.pdf) - C89 standard PDF.
 [Intel x86 Opcode Table and Reference](https://shell-storm.org/x86doc/) - a good source for checking the list of valid opcodes on x86-64 (don't even try to use the official Intel manual).
 [Online Assembler and Disassembler](https://shell-storm.org/online/Online-Assembler-and-Disassembler/) - an online disassembler to easily check if the assembly output is correct.
-
