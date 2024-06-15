@@ -13,24 +13,40 @@ typedef SI_ENUM(u32, scInitializerType) {
 	SC_INIT_UNARY,
 };
 
+typedef struct {
+	scTokenStruct* operators;
+	usize len;
+	scTokenStruct* value;
+} scExprUnary;
+
 typedef struct scInitializer {
 	scInitializerType type;
 	union {
+		scConstant constant;
+		u64 identifier;
 		struct {
 			scOperator operator;
 			scTokenStruct* left;
 			scTokenStruct* right;
 		} binary;
-		scConstant constant;
-		u64 identifier;
-		struct {
-			scOperator operator;
-			scTokenStruct* value;
-		} unary;
+		scExprUnary unary;
 	} value;
-
 	struct scInitializer* next;
 } scInitializer;
+SI_STATIC_ASSERT(sizeof(scInitializer) == 40);
+
+typedef SI_ENUM(u16, scIdentifierKeyType) {
+	SC_IDENTIFIER_KEY_FUNC = 1,
+	SC_IDENTIFIER_KEY_VAR,
+	SC_IDENTIFIER_KEY_TYPE
+};
+
+typedef struct {
+	scIdentifierKeyType type;
+	u16 rank;
+	char identifier[];
+} scIdentifierKey;
+SI_STATIC_ASSERT(sizeof(scIdentifierKey) == 4);
 
 typedef SI_ENUM(u32, scActionType) {
 	SC_ACTION_SCOPE_BEGIN = 1,
@@ -49,6 +65,7 @@ typedef SI_ENUM(u32, scActionType) {
 typedef struct {
 	scActionType type;
 	scTokenStruct* values;
+	scInitializer* init;
 } scAction;
 
 
@@ -87,40 +104,6 @@ typedef struct {
 	u32 location;
 } scFunction;
 
-
-typedef SI_ENUM(u16, scIdentifierKeyType) {
-	SC_IDENTIFIER_KEY_FUNC = 1,
-	SC_IDENTIFIER_KEY_VAR,
-	SC_IDENTIFIER_KEY_TYPE
-};
-
-typedef struct {
-	scIdentifierKeyType type;
-	u16 rank;
-	char identifier[];
-} scIdentifierKey;
-SI_STATIC_ASSERT(sizeof(scIdentifierKey) == 4);
-
-
-typedef SI_ENUM(u32, scAstNodeType) {
-	SC_AST_VAR_MAKE = 1,
-
-	SC_AST_VAR_ADD,
-	SC_AST_VAR_SUB,
-	SC_AST_VAR_MUL,
-	SC_AST_VAR_DIV,
-
-	SC_AST_SCOPE_BEGIN,
-	SC_AST_SCOPE_END,
-	SC_AST_RETURN
-};
-
-typedef struct {
-	scAstNodeType type;
-	scInitializer* init;
-	scIdentifierKey* key;
-} scAstNode;
-SI_STATIC_ASSERT(sizeof(scAstNode) == 24);
 
 
 /* NOTE(EimaMei): Ši struktūra galioja tik globajai galiojimo sričiai, įprastiniams
@@ -243,19 +226,13 @@ typedef SI_ENUM(u32, scAsmType) {
 	SC_ASM_SUB_M32_M32,
 	SC_ASM_SUB_M64_M64,
 
-
 	SC_ASM_NEG_R8,
-	SC_ASM_NEG_R16,
-	SC_ASM_NEG_R32,
-	SC_ASM_NEG_R64,
+	SC_ASM_NEG_M8 = SC_ASM_NEG_R8 + 4,
 
-	SC_ASM_NEG_M8,
-	SC_ASM_NEG_M16,
-	SC_ASM_NEG_M32,
-	SC_ASM_NEG_M64,
+	SC_ASM_NOT_R8 = SC_ASM_NEG_M8 + 4,
+	SC_ASM_NOT_M8 = SC_ASM_NOT_R8 + 4,
 
-
-	SC_ASM_CALL,
+	SC_ASM_CALL = SC_ASM_NOT_M8 + 4,
 
 	SC_ASM_RET_R8,
 	SC_ASM_RET_R16,
@@ -289,7 +266,6 @@ typedef SI_ENUM(u32, scIndex) {
 	SC_SCOPE,
 	SC_MAIN,
 
-	SC_AST,
 	SC_ASM,
 	SC_X86ASM,
 	SC_EXE,
@@ -333,6 +309,9 @@ extern scType type_double;
 	} while (0)
 
 
+#define sc_actionIdentifierGet(actionArr) \
+	*si_cast(scIdentifierKey**, &((actionArr)[0]));
+
 #define SI_LOG(msg) si_print(msg)
 #define SI_LOG_FMT(msg, ...) si_printf(msg, __VA_ARGS__)
 
@@ -353,9 +332,8 @@ void sc_constantArithmetic(scConstant* constant, scOperator operator, scConstant
 scPunctuator sc_actionAddValues(scLexer* lex, scAction* action);
 
 /* */
-#define sc_astNodeMake(ast, type, key, action) sc_astNodeMakeEx(ast, type, key, action, 0)
-scAstNode* sc_astNodeMakeEx(scAstNode* ast, scAstNodeType type, scIdentifierKey* key, siArray(scAction) action,
-		usize i);
+#define sc_astNodeMake(key, action) sc_astNodeMakeEx(key, action, 0)
+void sc_astNodeMakeEx(scIdentifierKey* key, siArray(scAction) action, usize i);
 
 /* */
 scVariable* sc_variableGet(scInfoTable* scope, u64 hash, i32* res);

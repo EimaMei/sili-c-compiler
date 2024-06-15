@@ -84,6 +84,9 @@ typedef struct {
 
 #define X86_CALL_REL32 0xE8
 
+#define X86_NEG_RM8 0xF6
+#define X86_NOT_RM8 0xF6
+
 #define X86_SYSCALL 0x0F05
 
 
@@ -124,12 +127,17 @@ typedef SI_ENUM(u32, x86Config) {
 	X86_CFG_XOR = SI_BIT(19),
 	X86_CFG_CMP = SI_BIT(20),
 
+	X86_CFG_NOTATION_2 = SI_BIT(21),
+	X86_CFG_NOTATION_3 = SI_BIT(22),
+
 
 	X86_CFG_INTWORD_BITS = X86_CFG_IB | X86_CFG_IW | X86_CFG_ID,
 	X86_CFG_MUL_OP_BITS = X86_CFG_ADD | X86_CFG_OR | X86_CFG_ADC | X86_CFG_SBB | X86_CFG_AND | X86_CFG_SUB | X86_CFG_XOR | X86_CFG_CMP,
 
+	X86_CFG_NOTATION_BITS = X86_CFG_NOTATION_2 | X86_CFG_NOTATION_3,
+
 	X86_CFG_DST_BITS = X86_CFG_DST_R | X86_CFG_DST_M | X86_CFG_SIB,
-	X86_CFG_SRC_BITS = X86_CFG_SRC_R | X86_CFG_SRC_M | X86_CFG_SIB,
+	X86_CFG_SRC_BITS = X86_CFG_SRC_R | X86_CFG_SRC_M | X86_CFG_SIB | X86_CFG_NOTATION_BITS,
 };
 
 
@@ -196,6 +204,14 @@ void sc_x86OpcodeEx(x86EnvironmentState* state, u8 opcode, u32 dst, u32 src, u8 
 		}
 
 		switch (config & X86_CFG_SRC_BITS) {
+			case X86_CFG_NOTATION_2:
+				reg = 2;
+				break;
+
+			case X86_CFG_NOTATION_3:
+				reg = 3;
+				break;
+
 			case X86_CFG_SRC_R:
 				reg = src;
 				break;

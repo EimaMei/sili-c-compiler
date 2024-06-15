@@ -188,5 +188,7 @@ statements)
 
 # Credits (for fun)
 [ANSI C89/ISO C90 standard draft](https://web.archive.org/web/20200909074736if_/https://www.pdf-archive.com/2014/10/02/ansi-iso-9899-1990-1/ansi-iso-9899-1990-1.pdf) - C89 standard PDF.
+
 [Intel x86 Opcode Table and Reference](https://shell-storm.org/x86doc/) - a good source for checking the list of valid opcodes on x86-64 (don't even try to use the official Intel manual).
+
 [Online Assembler and Disassembler](https://shell-storm.org/online/Online-Assembler-and-Disassembler/) - an online disassembler to easily check if the assembly output is correct.

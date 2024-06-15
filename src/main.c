@@ -109,27 +109,52 @@ void x86_OP_M32_M32_EX(x86EnvironmentState* x86, scAsm* instruction, u8 opcode, 
 #define X86_ASM_TEMPLATE_R_M(x86, type, baseOpcode, instruction) \
 	X86_ASM_TEMPLATE_RMB(x86, type, baseOpcode, instruction, X86_CFG_DST_R | X86_CFG_DST_M)
 
+#define X86_ASM_TEMPLATE_R_EX(x86, type, baseOpcode, instruction, extra) \
+	X86_ASM_TEMPLATE_RMB(x86, type, baseOpcode, instruction, X86_CFG_DST_R | (extra))
+
+#define X86_ASM_TEMPLATE_M_EX(x86, type, baseOpcode, instruction, extra) \
+	X86_ASM_TEMPLATE_RMB(x86, type, baseOpcode, instruction, X86_CFG_DST_M | (extra))
+
+#define X86_ASM_TEMPLATE_R(x86, type, baseOpcode, instruction) \
+	X86_ASM_TEMPLATE_RMB(x86, type, baseOpcode, instruction, X86_CFG_DST_R)
+
+#define X86_ASM_TEMPLATE_M(x86, type, baseOpcode, instruction) \
+	X86_ASM_TEMPLATE_RMB(x86, type, baseOpcode, instruction, X86_CFG_DST_M)
+
+
 #define X86_ASM_TEMPLATE_M_I(x86, type, baseOpcode, instruction) \
 	X86_ASM_TEMPLATE_RMB_EX(x86, type, baseOpcode, instruction, X86_CFG_DST_M, X86_CFG_IB, X86_CFG_IW, X86_CFG_ID, X86_CFG_ID)
 
 
+force_inline
+void sc_astNodeToAsm_IDENTIFIER(scInfoTable* scope, scAsm* instructions,
+		scAsmType asmTypes[3], u64 hash, scIdentifierKey* identifierKey) {
+	scIdentifierKey* key = si_hashtableGetWithHash(scope->identifiers, hash);
+	SI_ASSERT(key->type != SC_IDENTIFIER_KEY_FUNC);
 
-#if 0
-switch (node->type) {
-	case SC_AST_VAR_MAKE: {
-							  scVariable* var = (scVariable*)node->key->identifier;
-							  scInitializer* inits = node->init;
+	scVariable* src = (scVariable*)key->identifier;
 
-							  scInitializer* init = inits;
-							  stack = si_alignCeilEx(stack + var->type.size, var->type.size);
-							  var->location = stack;
-#endif
-void sc_astNodeToAsm(scInfoTable* scope, scAsm* instructions, scOperator assignment,
-		scAsmType asmTypes[3], b32 useRegForBinary, u32 typeSize, scAstNode* node,
-		u32 regSrc) {
 	scAsm asm;
+	asm.type = sc_asmGetCorrectType(asmTypes[1], src->type.size);
+	asm.src = src->location;
 
-	scInitializer* init = node->init;
+	if (identifierKey) {
+		SI_ASSERT(identifierKey->type == SC_IDENTIFIER_KEY_VAR);
+		scVariable* dst = (scVariable*)identifierKey->identifier;
+		asm.dst = dst->location;
+	}
+	else {
+		asm.dst = 0;
+	}
+
+	si_arrayPush(&instructions, asm);
+}
+
+void sc_astNodeToAsm(scInfoTable* scope, scAsm* instructions, scOperator assignment,
+		scAsmType asmTypes[3], b32 useRegForBinary, u32 typeSize,  scAction* action,
+		scIdentifierKey* key, u32 regSrc) {
+	scAsm asm;
+	scInitializer* init = action->init;
 
 	switch (init->type) {
 		case SC_INIT_CONSTANT: {
@@ -139,8 +164,7 @@ void sc_astNodeToAsm(scInfoTable* scope, scAsm* instructions, scOperator assignm
 			asm.type = sc_asmGetCorrectType(asmTypes[0], typeSize);
 			asm.src = constant.value.integer;
 
-			if (node->key) {
-				scIdentifierKey* key = node->key;
+			if (key) {
 				SI_ASSERT(key->type == SC_IDENTIFIER_KEY_VAR);
 				scVariable* var = (scVariable*)key->identifier;
 				asm.dst = var->location;
@@ -153,37 +177,38 @@ void sc_astNodeToAsm(scInfoTable* scope, scAsm* instructions, scOperator assignm
 			break;
 		}
 		case SC_INIT_IDENTIFIER: {
-			u64 hash = init->value.identifier;
-			scIdentifierKey* key = si_hashtableGetWithHash(scope->identifiers, hash);
-			SI_ASSERT(key->type != SC_IDENTIFIER_KEY_FUNC);
-
-			scVariable* var = (scVariable*)key->identifier;
-
-			asm.type = sc_asmGetCorrectType(asmTypes[1], var->type.size);
-			asm.src = var->location;
-
-			if (node->key) {
-				scIdentifierKey* key = node->key;
-				SI_ASSERT(key->type == SC_IDENTIFIER_KEY_VAR);
-				scVariable* var = (scVariable*)key->identifier;
-				asm.dst = var->location;
-			}
-			else {
-				asm.dst = 0;
-			}
-
-			si_arrayPush(&instructions, asm);
+			sc_astNodeToAsm_IDENTIFIER(scope, instructions, asmTypes, init->value.identifier, key);
 			break;
 		}
 
 		case SC_INIT_UNARY: {
-			switch (init->value.unary.operator) {
-				case SILEX_OPERATOR_MINUS: {
-					scInitializer* nextInit = init->next;
+			scExprUnary unary = init->value.unary;
+			SI_ASSERT(unary.value->type == SILEX_TOKEN_IDENTIFIER);
 
-					SI_PANIC();
+			sc_astNodeToAsm_IDENTIFIER(scope, instructions, asmTypes, unary.value->token.identifier.hash, key);
 
-					break;
+			for_range (i, 0, unary.len) {
+				scOperator operator = unary.operators[i].token.operator;
+
+				switch (operator) {
+					case SILEX_OPERATOR_MINUS: {
+						asm.type = sc_asmGetCorrectType(SC_ASM_NEG_M8, typeSize);
+						asm.dst = ((scAsm*)si_arrayBack(instructions))->dst;
+						asm.src = 0;
+						si_arrayPush(&instructions, asm);
+
+						break;
+					}
+					case SILEX_OPERATOR_TILDE: {
+						asm.type = sc_asmGetCorrectType(SC_ASM_NOT_M8, typeSize);
+						asm.dst = ((scAsm*)si_arrayBack(instructions))->dst;
+						asm.src = 0;
+						si_arrayPush(&instructions, asm);
+
+						break;
+					}
+
+					default: SI_PANIC();
 				}
 			}
 			break;
@@ -241,8 +266,7 @@ start:
 					}
 				}
 
-				if (node->key) {
-					scIdentifierKey* key = node->key;
+				if (key) {
 					SI_ASSERT(key->type == SC_IDENTIFIER_KEY_VAR);
 
 					scVariable* var = (scVariable*)key->identifier;
@@ -275,39 +299,22 @@ start:
 
 void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions) {
 	SI_LOG("== Parsing the function ==\n");
-	siArray(scAstNode) ast = si_arrayMakeReserve(alloc[SC_AST], sizeof(scAstNode), si_arrayLen(func->code));
 
+	SI_LOG_FMT("\tsi_arrayLen(func->code) = %i\n", si_arrayLen(func->code));
 	for_range (i, 0, si_arrayLen(func->code)) {
 		scAction* action = &func->code[i];
 
 		switch (action->type) {
+			case SC_ACTION_VAR_ADD:
+			case SC_ACTION_VAR_SUB:
 			case SC_ACTION_VAR_ASSIGN: {
-				scIdentifierKey* key = *si_cast(scIdentifierKey**, &action->values[0]);
-				scVariable* var = (scVariable*)key->identifier;
-
-				scAstNode* node = sc_astNodeMakeEx(ast, SC_AST_VAR_MAKE, key, action, 1);
-				var->init = node->init;
-				break;
-			}
-			case SC_ACTION_VAR_ADD: {
-				scIdentifierKey* key = *si_cast(scIdentifierKey**, &action->values[0]);
-				scVariable* var = (scVariable*)key->identifier;
-
-				scAstNode* node = sc_astNodeMakeEx(ast, SC_AST_VAR_ADD, key, action, 1);
-				var->init = node->init;
-				break;
-			}
-			case SC_ACTION_VAR_SUB: {
-				scIdentifierKey* key = *si_cast(scIdentifierKey**, &action->values[0]);
-				scVariable* var = (scVariable*)key->identifier;
-
-				scAstNode* node = sc_astNodeMakeEx(ast, SC_AST_VAR_SUB, key, action, 1);
-				var->init = node->init;
+				scIdentifierKey* key = sc_actionIdentifierGet(action->values);
+				sc_astNodeMakeEx(key, action, 1);
 				break;
 			}
 
 			case SC_ACTION_RETURN: {
-				sc_astNodeMake(ast, SC_AST_RETURN, nil, action);
+				sc_astNodeMake(nil, action);
 				break;
 			}
 			default: SI_PANIC();
@@ -317,8 +324,9 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 
 	scInitializer* prevInit;
 	scTokenStruct* prevTokenStruct[2];
-
+#if 0
 	for_range (i, 0, si_arrayLen(ast)) {
+		break;
 		scAstNode* node = &ast[i];
 		prevInit = nil;
 
@@ -348,6 +356,16 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 								}
 
 								break;
+							}
+							case SC_INIT_UNARY: {
+								i32 err;
+								sc_variableGetAndOptimizeToken(scope, right, &err);
+								sc_variableErrorCheck(err);
+
+								prevInit = init;
+								init = init->next;
+
+								continue;
 							}
 							case SC_INIT_BINARY: {
 								for_range (i, 0, countof(prevTokenStruct)) {
@@ -429,7 +447,7 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 		}
 	}
 	SI_LOG("== scAst optimizations complete  ==\n");
-
+#endif
 
 	scAsm asm;
 	asm.type = SC_ASM_FUNC_START;
@@ -457,58 +475,55 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 	}
 	SI_LOG("== Parameters -> scAsm complete  ==\n");
 
-	SI_LOG_FMT("si_arrayLen(ast) = %i\n", si_arrayLen(ast));
-	for_range (i, 0, si_arrayLen(ast)) {
-		scAstNode* node = &ast[i];
-		SI_ASSERT_NOT_NULL(node);
+	for_range (i, 0, si_arrayLen(func->code)) {
+		scAction* action = &func->code[i];
+		SI_ASSERT_NOT_NULL(action);
 
-		if (node->key) {
-			SI_LOG_FMT("\tscAst[%i] = {.type = %i, .node->key->type = %i, .init = %p}; ", i, node->type, node->key->type, node->init);
-		}
-		else {
-			SI_LOG_FMT("\tscAst[%i] = {.type = %i, .node->key = nil, .init = %p}; ", i, node->type, node->init);
-		}
-		switch (node->type) {
-			case SC_AST_VAR_MAKE: {
-				scVariable* var = (scVariable*)node->key->identifier;
+		switch (action->type) {
+			case SC_ACTION_VAR_ASSIGN: {
+				scIdentifierKey* key = sc_actionIdentifierGet(action->values);
+				scVariable* var = (scVariable*)key->identifier;
 				stack = si_alignCeilEx(stack + var->type.size, var->type.size);
 				var->location = stack;
 
 				sc_astNodeToAsm(
 					scope, instructions, 0,
 					si_buf(u32, SC_ASM_LD_M8_I8, SC_ASM_LD_M8_M8), false,
-					var->type.size, node,
+					var->type.size, action, key,
 					0
 				);
 				break;
 			}
-			case SC_AST_VAR_ADD: {
-				scVariable* var = (scVariable*)node->key->identifier;
+			case SC_ACTION_VAR_ADD: {
+				scIdentifierKey* key = sc_actionIdentifierGet(action->values);
+				scVariable* var = (scVariable*)key->identifier;
 
 				sc_astNodeToAsm(
 					scope, instructions, SILEX_OPERATOR_PLUS,
 					si_buf(u32, SC_ASM_ADD_M8_I8, SC_ASM_ADD_M8_M8), false,
-					var->type.size, node,
+					var->type.size, action, key,
 					0
 				);
 				break;
 			}
-			case SC_AST_VAR_SUB: {
-				scVariable* var = (scVariable*)node->key->identifier;
+			case SC_ACTION_VAR_SUB: {
+				scIdentifierKey* key = sc_actionIdentifierGet(action->values);
+				scVariable* var = (scVariable*)key->identifier;
+
 
 				sc_astNodeToAsm(
 					scope, instructions, SILEX_OPERATOR_MINUS,
 					si_buf(u32, SC_ASM_SUB_M8_I8, SC_ASM_SUB_M8_M8), false,
-					var->type.size, node,
+					var->type.size, action, key,
 					0
 				);
 				break;
 			}
-			case SC_AST_RETURN: {
+			case SC_ACTION_RETURN: {
 				sc_astNodeToAsm(
 					scope, instructions, 0,
-					si_buf(u32, SC_ASM_RET_I8, SC_ASM_RET_M8, SC_ASM_RET_R8), node->init->type == SC_INIT_BINARY,
-					func->type.size, node,
+					si_buf(u32, SC_ASM_RET_I8, SC_ASM_RET_M8, SC_ASM_RET_R8), action->init->type == SC_INIT_BINARY,
+					func->type.size, action, nil,
 					SC_RETURN_REGISTER
 				);
 				break;
@@ -643,11 +658,6 @@ int main(void) {
 
 		sizeof(scAction) * SC_MAX_ACTIONS +
 		sizeof(scTokenStruct) * SC_MAX_INITIALIZERS * SC_MAX_ACTIONS
-	);
-	SC_ALLOCATOR_MAKE(
-		SC_AST,
-		USIZE_MAX,
-		(sizeof(scAstNode) + sizeof(siArrayHeader) + sizeof(scInitializer) * SC_MAX_INITIALIZERS) * SC_MAX_ACTIONS
 	);
 
 	SC_ALLOCATOR_MAKE(
@@ -1025,7 +1035,7 @@ keyword_section:
 					case '{': {
 						SI_PANIC();
 						scAction action;
-						action.type = SC_AST_SCOPE_BEGIN;
+						action.type = SC_ACTION_SCOPE_BEGIN;
 						action.values = (scTokenStruct*)scope;
 						si_arrayPush(&curFunc->code, action);
 						break;
@@ -1047,7 +1057,7 @@ keyword_section:
 
 						SI_PANIC();
 						scAction action;
-						action.type = SC_AST_SCOPE_END;
+						action.type = SC_ACTION_SCOPE_END;
 						action.values = (scTokenStruct*)scope;
 						si_arrayPush(&curFunc->code, action);
 						break;
@@ -1171,6 +1181,13 @@ keyword_section:
 
 			X86_ASM_TEMPLATE_R_M(&x86, SC_ASM_LD_R8_M8, X86_MOV_R8_RM8, instruction)
 			X86_ASM_TEMPLATE_M_I(&x86, SC_ASM_LD_M8_I8, X86_MOV_RM8_I8, instruction)
+
+			X86_ASM_TEMPLATE_R_EX(&x86, SC_ASM_NEG_R8, X86_NEG_RM8, instruction, X86_CFG_NOTATION_3)
+			X86_ASM_TEMPLATE_M_EX(&x86, SC_ASM_NEG_M8, X86_NEG_RM8, instruction, X86_CFG_NOTATION_3)
+
+			X86_ASM_TEMPLATE_R_EX(&x86, SC_ASM_NOT_R8, X86_NOT_RM8, instruction, X86_CFG_NOTATION_2)
+			X86_ASM_TEMPLATE_M_EX(&x86, SC_ASM_NOT_M8, X86_NOT_RM8, instruction, X86_CFG_NOTATION_2)
+
 
 			case SC_ASM_LD_M32_M32:
 				x86_OP_M32_M32(&x86, instruction, X86_MOV_RM32_R32);

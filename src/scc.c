@@ -149,69 +149,176 @@ retry:
 
 }
 
-void sc_actionHandleTokenFront(scAction* action, scTokenStruct* token2, scTokenStruct* token3, usize *outI) {
-	SI_STOPIF(token3->type != SILEX_TOKEN_OPERATOR, return);
-
-	scTokenStruct* token4 = si_arrayAt(action->values, *outI + 3);
-	SI_ASSERT(token4 != nil && si_betweenu(token4->type, SILEX_TOKEN_IDENTIFIER, SILEX_TOKEN_CONSTANT));
-	SI_ASSERT(si_betweenu(token3->token.operator, SILEX_OPERATOR_PLUS, SILEX_OPERATOR_MINUS));
-
-	if (token2->token.operator == token3->token.operator) {
-		token2->token.operator = SILEX_OPERATOR_PLUS;
-	}
-	else {
-		token2->token.operator = SILEX_OPERATOR_MINUS;
-	}
-	*token3 = *token4;
-
-	*outI += 1;
-}
-
-void sc_actionHandleBinary(scAction* action, scInitializer* init,
-		scTokenStruct* token1, scTokenStruct* token2, usize* outI) {
-	SI_ASSERT(token2->type == SILEX_TOKEN_OPERATOR);
+scOperator sc_actionHandleTokenFront(scAction* action, scTokenStruct* prev,
+		scOperator operator, usize *outI, scTokenStruct** outRight) {
 	usize i = *outI;
 
-	scTokenStruct* token3 = si_arrayAt(action->values, i + 2);
-	SI_ASSERT_MSG(token3 != nil, "Expected an expression after the operator.");
-	sc_actionHandleTokenFront(action, token2, token3, &i);
+	i += 1;
+	scTokenStruct* token2 = si_arrayAt(action->values, i);
+	SI_ASSERT_NOT_NULL(token2);
 
-	init->type = SC_INIT_BINARY;
-	init->value.binary.left = token1;
-	init->value.binary.operator = token2->token.operator;
-	init->value.binary.right = token3;
+	while (token2 && token2->type == SILEX_TOKEN_OPERATOR) {
+		if (token2->token.operator == SILEX_OPERATOR_TILDE) {
+			token2->token.operator = SILEX_OPERATOR_MINUS;
 
-	i += 2;
-	*outI = i;
-}
+			if (prev && prev->type == SILEX_TOKEN_CONSTANT) {
+				prev->token.constant.value.integer -= 1;
+			}
+		}
 
-scAstNode* sc_astNodeMakeEx(scAstNode* ast, scAstNodeType type, scIdentifierKey* key, siArray(scAction) action,
-		usize i) {
-	SI_ASSERT_NOT_NULL(ast);
-	SI_ASSERT_NOT_NULL(action);
-
-	scAstNode* node = si_arrayPush(&ast, 0);
-	node->type = type;
-	node->key = key;
-
-	scInitializer* prevInit = nil;
-	scTokenStruct* token1, *token2;
-
-	SI_LOG_FMT("\tsi_arrayLen(action->values) = %i\n", si_arrayLen(action->values));
-	for ( ; i < si_arrayLen(action->values); i += 1) {
-		token1 = &action->values[i];
-		SI_ASSERT_NOT_NULL(token1);
-		SI_LOG_FMT("\t\taction->values[%i] = {.type = %i};\n", i, token1->type);
-
-		token2 = si_arrayAt(action->values, i + 1);
-
-		if (token2 != nil) {
-			SI_LOG_FMT("\t\taction->values[%i] = {.type = %i}; ", i + 1, token2->type);
+		if (token2->token.operator == operator) {
+			operator = SILEX_OPERATOR_PLUS;
 		}
 		else {
-			SI_LOG_FMT("\t\taction->values[%i] = nil; ", i + 1);
+			operator = SILEX_OPERATOR_MINUS;
 		}
 
+		i += 1;
+		token2 = si_arrayAt(action->values, i);
+	}
+
+	*outI = i;
+	*outRight = token2;
+	return operator;
+}
+#if 0
+	init->type = SC_INIT_BINARY;
+	init->value.binary.left = nil;
+	init->value.binary.operator = operator;
+	init->value.binary.right = token2;
+
+	prevInit = init;
+	init->next = nil;
+}
+#endif
+
+void sc_astNodeMakeEx(scIdentifierKey* key, siArray(scAction) action, usize i) {
+	SI_ASSERT_NOT_NULL(action);
+
+	scInitializer* prevInit = nil;
+	scTokenStruct* token;
+
+	scTokenStruct* left = nil;
+
+	for ( ; i < si_arrayLen(action->values); i += 1) {
+		token = &action->values[i];
+
+		scInitializer* init = si_mallocItem(alloc[SC_MAIN], scInitializer);
+		if (prevInit != nil) {
+			prevInit->next = init;
+		}
+		else {
+			action->init = init;
+		}
+
+		if (token->type == SILEX_TOKEN_OPERATOR) {
+			if (left == nil) {
+				usize ogI = i - 1;
+
+				while (true) {
+					scTokenStruct* token = si_arrayAt(action->values, i);
+					i += 1;
+
+					if (token == nil) {
+						break;
+					}
+					else if (token->type != SILEX_TOKEN_OPERATOR) {
+						left = token;
+						break;
+					}
+				}
+				SI_ASSERT_NOT_NULL(left);
+
+
+				scTokenStruct* operator = si_arrayAt(action->values, i);
+
+				if (operator == nil) {
+					init->type = SC_INIT_UNARY;
+					init->value.unary.operators = token;
+					init->value.unary.len = left - token;
+					init->value.unary.value = left;
+				}
+				else {
+					scTokenStruct* right;
+					sc_actionHandleTokenFront(action, nil, 0, &i, &right);
+
+
+					scOperator op = sc_actionHandleTokenFront(action, right, operator->token.operator, &ogI, &left);
+
+					init->type = SC_INIT_BINARY;
+					init->value.binary.left = left;
+					init->value.binary.operator = op;
+					init->value.binary.right = right;
+
+					prevInit = init;
+					init->next = nil;
+
+					continue;
+				}
+			}
+			else {
+				scTokenStruct* token2;
+				scOperator operator = sc_actionHandleTokenFront(action, nil, token->token.operator, &i, &token2);
+
+				init->type = SC_INIT_BINARY;
+				init->value.binary.left = nil;
+				init->value.binary.operator = operator;
+				init->value.binary.right = token2;
+
+				prevInit = init;
+				init->next = nil;
+
+				continue;
+			}
+		}
+		else {
+			left = token;
+		}
+
+		i += 1;
+
+		scTokenStruct* token2 = si_arrayAt(action->values, i);
+		if (token2 == nil) {
+			switch (token->type) {
+				case SILEX_TOKEN_CONSTANT: {
+					init->type = SC_INIT_CONSTANT;
+					init->value.constant = left->token.constant;
+					break;
+				}
+				case SILEX_TOKEN_IDENTIFIER: {
+					init->type = SC_INIT_IDENTIFIER;
+					init->value.constant = left->token.constant;
+
+					break;
+				}
+				case SILEX_TOKEN_OPERATOR: {
+#if 0
+					prevInit = init;
+
+					scInitializer* init = si_mallocItem(alloc[SC_AST], scInitializer);
+					prevInit->next = init;
+#endif
+					break;
+				}
+			}
+			continue;
+		}
+
+		scTokenStruct* token3;
+		scOperator operator = sc_actionHandleTokenFront(action, left, token2->token.operator, &i, &token3);
+
+		init->type = SC_INIT_BINARY;
+		init->value.binary.left = left;
+		init->value.binary.operator = operator;
+		init->value.binary.right = token3;
+
+		prevInit = init;
+		init->next = nil;
+
+		//token2 = si_arrayBack(action->values);
+		//token3 = si_arrayBack(action->values);
+
+#if 0
 		scInitializer* init = si_mallocItem(alloc[SC_AST], scInitializer);
 		if (prevInit != nil) {
 			prevInit->next = init;
@@ -222,17 +329,19 @@ scAstNode* sc_astNodeMakeEx(scAstNode* ast, scAstNodeType type, scIdentifierKey*
 
 		prevInit = init;
 		init->next = nil;
-
-		switch (token1->type) {
+#endif
+#if 0
+		switch (token->type) {
 			case SILEX_TOKEN_CONSTANT: {
-				SI_STOPIF(token2 != nil, sc_actionHandleBinary(action, init, token1, token2, &i); break);
-				init->type = SC_INIT_CONSTANT;
-				init->value.constant = token1->token.constant;
+				//SI_STOPIF(token2 != nil, sc_actionHandleBinary(action, init, token1, token2, &i); break);
+				//init->type = SC_INIT_CONSTANT;
+				//init->value.constant = token->token.constant;
 				break;
 			}
 
 			case SILEX_TOKEN_OPERATOR: {
-				SI_ASSERT(token2 != nil);
+				//SI_ASSERT(token2 != nil);
+#if 0
 				if (init == node->init) { /* NOTE(EimaMei): Jei 'init' yra apibrėžimo pradžia. */
 					scTokenStruct* token3 = si_arrayAt(action->values, i + 2);
 					if (token3 == nil) {
@@ -253,30 +362,29 @@ scAstNode* sc_astNodeMakeEx(scAstNode* ast, scAstNodeType type, scIdentifierKey*
 					i += 3;
 					break;
 				}
+#endif
+				//init->type = SC_INIT_BINARY;
+				//init->value.binary.left = nil;
+				//init->value.binary.operator = token1->token.operator;
+				//init->value.binary.right = token2;
 
-				init->type = SC_INIT_BINARY;
-				init->value.binary.left = nil;
-				init->value.binary.operator = token1->token.operator;
-				init->value.binary.right = token2;
-
-				i += 1;
+				//i += 1;
 				break;
 			}
 			case SILEX_TOKEN_IDENTIFIER: {
-				SI_STOPIF(token2 != nil, sc_actionHandleBinary(action, init, token1, token2, &i); break);
-				init->type = SC_INIT_IDENTIFIER;
-				init->value.identifier = token1->token.identifier.hash;
+				//SI_STOPIF(token2 != nil, sc_actionHandleBinary(action, init, token1, token2, &i); break);
+				//init->type = SC_INIT_IDENTIFIER;
+				//init->value.identifier = token1->token.identifier.hash;
 				break;
 			}
 
 
 			default: SI_PANIC();
 		}
+#endif
 
 		SI_LOG("[Complete]\n");
 	}
-
-	return node;
 }
 
 scVariable* sc_variableGet(scInfoTable* scope, u64 hash, i32* res) {
