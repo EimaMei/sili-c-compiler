@@ -126,39 +126,14 @@ void x86_OP_M32_M32_EX(x86EnvironmentState* x86, scAsm* instruction, u8 opcode, 
 	X86_ASM_TEMPLATE_RMB_EX(x86, type, baseOpcode, instruction, X86_CFG_DST_M, X86_CFG_IB, X86_CFG_IW, X86_CFG_ID, X86_CFG_ID)
 
 
-force_inline
-void sc_astNodeToAsm_IDENTIFIER(scInfoTable* scope, scAsm* instructions,
-		scAsmType asmTypes[3], u64 hash, scIdentifierKey* identifierKey) {
-	scIdentifierKey* key = si_hashtableGetWithHash(scope->identifiers, hash);
-	SI_ASSERT(key->type != SC_IDENTIFIER_KEY_FUNC);
-
-	scVariable* src = (scVariable*)key->identifier;
-
-	scAsm asm;
-	asm.type = sc_asmGetCorrectType(asmTypes[1], src->type.size);
-	asm.src = src->location;
-
-	if (identifierKey) {
-		SI_ASSERT(identifierKey->type == SC_IDENTIFIER_KEY_VAR);
-		scVariable* dst = (scVariable*)identifierKey->identifier;
-		asm.dst = dst->location;
-	}
-	else {
-		asm.dst = 0;
-	}
-
-	si_arrayPush(&instructions, asm);
-}
-
 void sc_astNodeToAsm(scInfoTable* scope, scAsm* instructions, scOperator assignment,
-		scAsmType asmTypes[3], b32 useRegForBinary, u32 typeSize,  scAction* action,
+		scAsmType asmTypes[3], u32 typeSize,  scAction* action, scAstNode* node,
 		scIdentifierKey* key, u32 regSrc) {
 	scAsm asm;
-	scInitializer* init = action->init;
 
-	switch (init->type) {
-		case SC_INIT_CONSTANT: {
-			scConstant constant = init->value.constant;
+	switch (node->type) {
+		case SC_AST_NODE_TYPE_CONSTANT: {
+			scConstant constant = node->data.constant;
 
 			/* TODO(EimaMei): SC_ASM_LD_M64_I64. */
 			asm.type = sc_asmGetCorrectType(asmTypes[0], typeSize);
@@ -176,126 +151,157 @@ void sc_astNodeToAsm(scInfoTable* scope, scAsm* instructions, scOperator assignm
 			si_arrayPush(&instructions, asm);
 			break;
 		}
-		case SC_INIT_IDENTIFIER: {
-			sc_astNodeToAsm_IDENTIFIER(scope, instructions, asmTypes, init->value.identifier, key);
-			break;
-		}
 
-		case SC_INIT_UNARY: {
-			scExprUnary unary = init->value.unary;
-			SI_ASSERT(unary.value->type == SILEX_TOKEN_IDENTIFIER);
+		case SC_AST_NODE_TYPE_IDENTIFIER: {
+			u64 hash = node->data.identifier;
+			scIdentifierKey* srcKey = si_hashtableGetWithHash(scope->identifiers, hash);
+			SI_ASSERT(srcKey->type != SC_IDENTIFIER_KEY_FUNC);
 
-			sc_astNodeToAsm_IDENTIFIER(scope, instructions, asmTypes, unary.value->token.identifier.hash, key);
+			scVariable* src = (scVariable*)srcKey->identifier;
 
-			for_range (i, 0, unary.len) {
-				scOperator operator = unary.operators[i].token.operator;
+			asm.type = sc_asmGetCorrectType(asmTypes[1], src->type.size);
+			asm.src = src->location;
 
-				switch (operator) {
-					case SILEX_OPERATOR_MINUS: {
-						asm.type = sc_asmGetCorrectType(SC_ASM_NEG_M8, typeSize);
-						asm.dst = ((scAsm*)si_arrayBack(instructions))->dst;
-						asm.src = 0;
-						si_arrayPush(&instructions, asm);
-
-						break;
-					}
-					case SILEX_OPERATOR_TILDE: {
-						asm.type = sc_asmGetCorrectType(SC_ASM_NOT_M8, typeSize);
-						asm.dst = ((scAsm*)si_arrayBack(instructions))->dst;
-						asm.src = 0;
-						si_arrayPush(&instructions, asm);
-
-						break;
-					}
-
-					default: SI_PANIC();
-				}
-			}
-			break;
-		}
-
-		case SC_INIT_BINARY: {
-			scTokenStruct* left, *right;
-start:
-			left = init->value.binary.left,
-			right = init->value.binary.right;
-			scOperator operator = init->value.binary.operator;
-
-			scTokenStruct* arguments[2] = {left, right};
-
-			scAsmType typesLD[2];
-			scAsmType typesOP[2];
-			if (!useRegForBinary) {
-				typesLD[0] = !assignment ? SC_ASM_LD_M8_M8 : sc_asmGetCorrectOperator(SC_ASM_ADD_M8_M8, assignment);
-				typesLD[1] = !assignment ? SC_ASM_LD_M8_I8 : sc_asmGetCorrectOperator(SC_ASM_ADD_M8_I8, assignment);
-				typesOP[0] = sc_asmGetCorrectOperator(SC_ASM_ADD_M8_M8, operator);
-				typesOP[1] = sc_asmGetCorrectOperator(SC_ASM_ADD_M8_I8, operator);
+			if (key) {
+				SI_ASSERT(key->type == SC_IDENTIFIER_KEY_VAR);
+				scVariable* dst = (scVariable*)key->identifier;
+				asm.dst = dst->location;
 			}
 			else {
-				typesLD[0] = !assignment ? SC_ASM_LD_R8_M8 : sc_asmGetCorrectOperator(SC_ASM_ADD_R8_M8, assignment);
-				typesLD[1] = !assignment ? SC_ASM_LD_R8_I8 : sc_asmGetCorrectOperator(SC_ASM_ADD_R8_I8, assignment);
-				typesOP[0] = sc_asmGetCorrectOperator(SC_ASM_ADD_R8_M8, operator);
-				typesOP[1] = sc_asmGetCorrectOperator(SC_ASM_ADD_R8_I8, operator);
+				asm.dst = 0;
+			}
+
+			si_arrayPush(&instructions, asm);
+			break;
+		}
+
+		case SC_AST_NODE_TYPE_UNARY_OP: {
+			scOperator operator = node->data.unary.operator;
+			node = node->data.unary.operand;
+			sc_astNodeToAsm(scope, instructions, assignment, asmTypes, typeSize, action, node, key, regSrc);
+
+			switch (operator) {
+				case SILEX_OPERATOR_MINUS: {
+					asm.type = sc_asmGetCorrectType(SC_ASM_NEG_M8, typeSize);
+					asm.dst = ((scAsm*)si_arrayBack(instructions))->dst;
+					asm.src = 0;
+					si_arrayPush(&instructions, asm);
+
+					break;
+				}
+				case SILEX_OPERATOR_TILDE: {
+					asm.type = sc_asmGetCorrectType(SC_ASM_NOT_M8, typeSize);
+					asm.dst = ((scAsm*)si_arrayBack(instructions))->dst;
+					asm.src = 0;
+					si_arrayPush(&instructions, asm);
+
+					break;
+				}
+				default: si_printf("qwe: %i\n", node->data.unary.operator); SI_PANIC();
+			}
+
+			break;
+		}
+
+		case SC_AST_NODE_TYPE_BINARY_OP: {
+			scOperator operator = node->data.binary.operator;
+			scAsmType typesLD[2];
+			scAsmType typesOP[2];
+			if (key != nil) {
+				typesLD[0] = !assignment ? SC_ASM_LD_M8_I8 : sc_asmGetCorrectOperator(SC_ASM_ADD_M8_I8, assignment);
+				typesLD[1] = !assignment ? SC_ASM_LD_M8_M8 : sc_asmGetCorrectOperator(SC_ASM_ADD_M8_M8, assignment);
+				typesOP[0] = sc_asmGetCorrectOperator(SC_ASM_ADD_M8_I8, operator);
+				typesOP[1] = sc_asmGetCorrectOperator(SC_ASM_ADD_M8_M8, operator);
+			}
+			else {
+				typesLD[0] = !assignment ? SC_ASM_LD_R8_I8 : sc_asmGetCorrectOperator(SC_ASM_ADD_R8_I8, assignment);
+				typesLD[1] = !assignment ? SC_ASM_LD_R8_M8 : sc_asmGetCorrectOperator(SC_ASM_ADD_R8_M8, assignment);
+				typesOP[0] = sc_asmGetCorrectOperator(SC_ASM_ADD_R8_I8, operator);
+				typesOP[1] = sc_asmGetCorrectOperator(SC_ASM_ADD_R8_M8, operator);
 			}
 
 			scAsmType* types[2] = {typesLD, typesOP};
-			/* NOTE(EimaMei): '(left == nil)' ignoruoja pirmąjį argumentą, jei jis
-			 * yra nežinomasis. */
-			for_range (j, (left == nil), countof(arguments)) {
-				scTokenStruct* arg = arguments[j];
 
-				switch (arg->type) {
-					case SILEX_TOKEN_IDENTIFIER: {
-						u64 hash = arg->token.identifier.hash;
-						scIdentifierKey* key = si_hashtableGetWithHash(scope->identifiers, hash);
-						SI_ASSERT(key->type != SC_IDENTIFIER_KEY_FUNC);
+			// b32 isRoot = action->root == node;
+			sc_astNodeToAsm(scope, instructions, assignment, types[0], typeSize, action, node->data.binary.left, key, regSrc);
+			sc_astNodeToAsm(scope, instructions, assignment, types[1], typeSize, action, node->data.binary.right, key, regSrc);
 
-						scVariable* var = (scVariable*)key->identifier;
-						asm.type = sc_asmGetCorrectType(types[j][0], var->type.size);
-						asm.src = var->location;
-
-						break;
-					}
-					case SILEX_TOKEN_CONSTANT: {
-						scConstant constant = arg->token.constant;
-
-						asm.type = sc_asmGetCorrectType(types[j][1], typeSize);
-						asm.src = constant.value.integer;
-
-						break;
-					}
-				}
-
-				if (key) {
-					SI_ASSERT(key->type == SC_IDENTIFIER_KEY_VAR);
-
-					scVariable* var = (scVariable*)key->identifier;
-					asm.dst = var->location;
-				}
-				else {
-					asm.dst = 0;
-				}
-
+			if (key == nil) {
+				SI_PANIC();
+				asm.type = sc_asmGetCorrectType(asmTypes[2], typeSize);
+				asm.dst = 0;
+				asm.src = regSrc;
 				si_arrayPush(&instructions, asm);
 			}
-
 			break;
 		}
-		default: SI_PANIC();
-	}
-
-	init = init->next;
-	SI_STOPIF(init != nil, goto start);
-
-
-	if (useRegForBinary) {
-		asm.type = sc_asmGetCorrectType(asmTypes[2], typeSize);
-		asm.dst = 0;
-		asm.src = regSrc;
-		si_arrayPush(&instructions, asm);
 	}
 }
 
+void sc_astwhater(scAstNode* other) {
+	if (other->type == SC_AST_NODE_TYPE_CONSTANT) {
+		other->data.constant.value.integer += 1;
+	}
+	else if (other->type == SC_AST_NODE_TYPE_BINARY_OP) {
+		sc_astwhater(other->data.binary.left);
+		sc_astwhater(other->data.binary.right);
+	}
+}
+
+void sc_astNodeOptimize(scAstNode* node) {
+	SI_STOPIF(node->type != SC_AST_NODE_TYPE_BINARY_OP, return);
+
+	scAstNode* args[] = {node->data.binary.left, node->data.binary.right};
+	for_range (i, 0, countof(args)) {
+		scAstNode* arg = args[i];
+
+		switch (arg->type) {
+			case SC_AST_NODE_TYPE_BINARY_OP:
+				sc_astNodeOptimize(arg);
+				break;
+			case SC_AST_NODE_TYPE_UNARY_OP: {
+				scOperator operator = arg->data.unary.operator;
+
+				if (operator == SILEX_OPERATOR_TILDE) {
+					operator = SILEX_OPERATOR_MINUS;
+
+					scAstNode* other = args[i ^ 1];
+					sc_astwhater(other);
+				}
+
+				if (node->data.binary.operator == operator) {
+					node->data.binary.operator = SILEX_OPERATOR_PLUS;
+					*arg = *arg->data.unary.operand;
+				}
+				else {
+					node->data.binary.operator = SILEX_OPERATOR_MINUS;
+					*arg = *arg->data.unary.operand;
+				}
+				break;
+			}
+			case SC_AST_NODE_TYPE_CONSTANT: {
+				scAstNode* other = args[i ^ 1];
+				if (other->type == SC_AST_NODE_TYPE_CONSTANT) {
+					scOperator operator = node->data.binary.operator;
+					switch (operator) {
+						case SILEX_OPERATOR_PLUS:
+							arg->data.constant.value.integer += other->data.constant.value.integer;
+							break;
+						case SILEX_OPERATOR_MINUS:
+							arg->data.constant.value.integer -= other->data.constant.value.integer;
+							break;
+						/* case SILEX_OPERATOR_MUL: oppositeLeft *= right; */
+						default: SI_PANIC();
+					}
+					node->type = SC_AST_NODE_TYPE_CONSTANT;
+					node->data.constant = arg->data.constant;
+					i += 1;
+				}
+				break;
+			}
+		}
+	}
+}
 
 void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions) {
 	SI_LOG("== Parsing the function ==\n");
@@ -308,22 +314,24 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 			case SC_ACTION_VAR_ADD:
 			case SC_ACTION_VAR_SUB:
 			case SC_ACTION_VAR_ASSIGN: {
-				scIdentifierKey* key = sc_actionIdentifierGet(action->values);
-				sc_astNodeMakeEx(key, action, 1);
+				sc_astNodeMake(action, true);
 				break;
 			}
 
 			case SC_ACTION_RETURN: {
-				sc_astNodeMake(nil, action);
+				sc_astNodeMake(action, false);
 				break;
 			}
 			default: SI_PANIC();
 		}
 	}
-	SI_LOG("== scAction -> scAst complete  ==\n");
+	SI_LOG("== AST nodes have been completed  ==\n");
 
-	scInitializer* prevInit;
-	scTokenStruct* prevTokenStruct[2];
+	for_range (i, 0, si_arrayLen(func->code)) {
+		scAction* action = &func->code[i];
+
+		sc_astNodeOptimize(action->root);
+	}
 #if 0
 	for_range (i, 0, si_arrayLen(ast)) {
 		break;
@@ -336,14 +344,14 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 		while (init != nil) {
 			switch (init->type) {
 				case SC_INIT_BINARY: {
-					scTokenStruct* left = init->value.binary.left,
-								  *right = init->value.binary.right;
+					scTokenStruct* left = init->node.binary.left,
+								  *right = init->node.binary.right;
 
 					if (left == nil) {
 						switch (prevInit->type) {
 							case SC_INIT_CONSTANT: {
 								scConstant constant = prevInit->value.constant;
-								left = init->value.binary.left = prevTokenStruct[0];
+								left = init->node.binary.left = prevTokenStruct[0];
 
 								left->type = SILEX_TOKEN_CONSTANT;
 								left->token.constant = constant;
@@ -372,17 +380,6 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 									left = prevTokenStruct[i];
 
 									if (left->type == SILEX_TOKEN_CONSTANT && left->type == right->type) {
-										scOperator operator = init->value.binary.operator;
-										switch (operator) {
-											case SILEX_OPERATOR_PLUS:
-												left->token.constant.value.integer += right->token.constant.value.integer;
-												break;
-											case SILEX_OPERATOR_MINUS:
-												left->token.constant.value.integer -= right->token.constant.value.integer;
-												break;
-											/* case SILEX_OPERATOR_MUL: oppositeLeft *= right; */
-											default: SI_PANIC();
-										}
 										prevInit->next = init->next;
 										init = prevInit;
 										break;
@@ -413,7 +410,7 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 					prevTokenStruct[1] = right;
 
 					if (left->type == SILEX_TOKEN_CONSTANT && left->type == right->type) {
-						scOperator op = init->value.binary.operator;
+						scOperator op = init->node.binary.operator;
 						init->value.constant = left->token.constant;
 
 						sc_constantArithmetic(&left->token.constant, op, right->token.constant);
@@ -446,8 +443,8 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 			init = init->next;
 		}
 	}
-	SI_LOG("== scAst optimizations complete  ==\n");
 #endif
+	SI_LOG("== AST node optimizations have been implemented ==\n");
 
 	scAsm asm;
 	asm.type = SC_ASM_FUNC_START;
@@ -488,8 +485,8 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 
 				sc_astNodeToAsm(
 					scope, instructions, 0,
-					si_buf(u32, SC_ASM_LD_M8_I8, SC_ASM_LD_M8_M8), false,
-					var->type.size, action, key,
+					si_buf(u32, SC_ASM_LD_M8_I8, SC_ASM_LD_M8_M8),
+					var->type.size, action, action->root, key,
 					0
 				);
 				break;
@@ -500,8 +497,8 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 
 				sc_astNodeToAsm(
 					scope, instructions, SILEX_OPERATOR_PLUS,
-					si_buf(u32, SC_ASM_ADD_M8_I8, SC_ASM_ADD_M8_M8), false,
-					var->type.size, action, key,
+					si_buf(u32, SC_ASM_ADD_M8_I8, SC_ASM_ADD_M8_M8),
+					var->type.size, action, action->root, key,
 					0
 				);
 				break;
@@ -513,8 +510,8 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 
 				sc_astNodeToAsm(
 					scope, instructions, SILEX_OPERATOR_MINUS,
-					si_buf(u32, SC_ASM_SUB_M8_I8, SC_ASM_SUB_M8_M8), false,
-					var->type.size, action, key,
+					si_buf(u32, SC_ASM_SUB_M8_I8, SC_ASM_SUB_M8_M8),
+					var->type.size, action, action->root, key,
 					0
 				);
 				break;
@@ -522,8 +519,8 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 			case SC_ACTION_RETURN: {
 				sc_astNodeToAsm(
 					scope, instructions, 0,
-					si_buf(u32, SC_ASM_RET_I8, SC_ASM_RET_M8, SC_ASM_RET_R8), action->init->type == SC_INIT_BINARY,
-					func->type.size, action, nil,
+					si_buf(u32, SC_ASM_RET_I8, SC_ASM_RET_M8, SC_ASM_RET_R8),
+					func->type.size, action, action->root, nil,
 					SC_RETURN_REGISTER
 				);
 				break;
@@ -801,7 +798,7 @@ int main(void) {
 										break;
 									}
 
-									default: SI_PANIC();
+									default: continue;
 								}
 								break;
 							}
@@ -886,7 +883,6 @@ type_section_start:
 
 								scVariable* pVar = (scVariable*)key->identifier;
 								pVar->type = type;
-								pVar->init = nil;
 
 								siHashEntry* param = si_hashtableSetWithHash(funcScope->identifiers, hash, key, &res);
 								SI_ASSERT(res);
@@ -1106,7 +1102,7 @@ keyword_section:
 						break;
 					}
 
-					default: SI_PANIC();
+					default: continue;
 				}
 			}
 		}

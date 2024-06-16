@@ -74,7 +74,7 @@ extern "C" {
 	typedef SILEX_HASH_TYPE scHashType;
 #endif
 
-typedef SI_ENUM(u32, scTokenType) {
+typedef SI_ENUM(i32, scTokenType) {
 	SILEX_TOKEN_NONE = 0,
 	SILEX_TOKEN_KEYWORD,
 	SILEX_TOKEN_IDENTIFIER,
@@ -87,14 +87,14 @@ typedef SI_ENUM(u32, scTokenType) {
 	SILEX_TOKEN_INVALID,
 };
 
-typedef SI_ENUM(u32, scTokenError) {
+typedef SI_ENUM(i32, scTokenError) {
 	SILEX_ERROR_NONE,
 	SILEX_ERROR_SUFFIX_LONG,
 	SILEX_ERROR_SUFFIX_UNSIGNED,
 	SILEX_ERROR_PREFIX_MINUS,
 };
 
-typedef SI_ENUM(u32, scKeyword) {
+typedef SI_ENUM(i32, scKeyword) {
 	SILEX_KEYWORD_NONE = 0,
 	SILEX_KEYWORD_AUTO,
 	SILEX_KEYWORD_BREAK,
@@ -134,7 +134,7 @@ typedef SI_ENUM(u32, scKeyword) {
 
 #define silex_keywordIsType(keyword) si_betweenu(keyword, SILEX_KEYWORD_CHAR, SILEX_KEYWORD_DOUBLE)
 
-typedef SI_ENUM(u32, scConstantType) {
+typedef SI_ENUM(i32, scConstantType) {
 	SILEX_CONSTANT_NUM_SIGNED = 1,
 	SILEX_CONSTANT_NUM_UNSIGNED,
 	SILEX_CONSTANT_FLOAT,
@@ -148,7 +148,7 @@ typedef struct {
 	} value;
 } scConstant;
 
-typedef SI_ENUM(u32, scPunctuator) {
+typedef SI_ENUM(i32, scPunctuator) {
 	SILEX_PUNCTUATOR_BRACKET_L = '(',
 	SILEX_PUNCTUATOR_BRACKET_R = ')',
 	SILEX_PUNCTUATOR_SQUARE_BRACKET_L = '[',
@@ -162,7 +162,7 @@ typedef SI_ENUM(u32, scPunctuator) {
 	SILEX_PUNCTUATOR_COMMA = ',',
 };
 
-typedef SI_ENUM(u32, scOperator) {
+typedef SI_ENUM(i32, scOperator) {
 	SILEX_OPERATOR_PLUS = 1,
 	SILEX_OPERATOR_MINUS,
 	SILEX_OPERATOR_MULTIPLY,
@@ -272,7 +272,7 @@ siIntern
 scKeyword silex__tokenIdToKeyword(u64 num);
 
 siIntern
-b32 silex__tokenizeConsantInt(scLexer* lexer, const char* pLetter, usize* unaryBitLen,
+b32 silex__tokenizeConsantInt(scLexer* lexer, const char* pLetter, isize* unaryBitLen,
 		u64* unary);
 
 
@@ -295,7 +295,7 @@ b32 silex_lexerTokenGet(scLexer* lexer) {
 	 * yra leidžiama turėti belekiek vienviečių ženklų, kurio pradžia prasideda
 	 * nuo pirmosios leksemos ženklo. Kas 2 bitai 'unary'-oje yra reikšmė, nurodanti
 	 * negatyvo (0b01, -), bitinės papildomojo (0b10, ~) arba NE (0b11, !) operaciją. */
-	usize unaryBitLen = 0;
+	isize unaryBitLen = -1;
 	u64 unary[(SILEX_UNARY_CHAR_LIMIT) / (sizeof(u64) * 8 / 2)];
 	memset(unary, 0, sizeof(unary));
 
@@ -317,8 +317,8 @@ back:
 
 #define SILEX_UNARY_ADD(unary, unaryBitLen, bit) \
 	do { \
-		SI_ASSERT(unaryBitLen < sizeof(unary) * 8); \
-		unary[unaryBitLen / 32u] |= (u64)(bit) << (unaryBitLen % 32u); \
+		SI_ASSERT(unaryBitLen < (isize)sizeof(unary) * 8); \
+		unary[unaryBitLen / 32u] |= (u64)(bit) << ((usize)unaryBitLen % 32u); \
 		unaryBitLen += 2; \
 	} while(0)
 
@@ -348,6 +348,8 @@ back:
 				}
 
 				lexer->__state = SC__STATE_NUM_EXISTS;
+				unaryBitLen = -1;
+
 				lexer->type = SILEX_TOKEN_IDENTIFIER;
 #ifndef SILEX_NO_LEN
 				lexer->token.identifier.len = len;
@@ -366,11 +368,18 @@ back:
 		case '!': {
 			pLetter += 1;
 			while (si_charIsSpace(*pLetter)) { pLetter += 1; }
-			if ((lexer->__state & SC__STATE_NUM_EXISTS) == 0 && (si_charIsDigit(*pLetter) || si_charIsUnary(*pLetter))) {
-				SILEX_UNARY_ADD(unary, unaryBitLen, SC__UNARY_BIT_EXCLAMATION);
-				goto start;
-			}
+			if ((lexer->__state & SC__STATE_NUM_EXISTS) == 0) {
+				if (unaryBitLen == -1) {
+					const char* check = pLetter;
+					while (!si_charIsAlphanumeric(*check)) { check += 1; }
+					unaryBitLen = -2 * !si_charIsDigit(*check);
+				}
 
+				if (unaryBitLen != -2) {
+					SILEX_UNARY_ADD(unary, unaryBitLen, SC__UNARY_BIT_EXCLAMATION);
+					goto start;
+				}
+			}
 			lexer->__state = 0;
 			lexer->curData = pLetter;
 			lexer->type = SILEX_TOKEN_OPERATOR;
@@ -382,9 +391,17 @@ back:
 		case '~': {
 			pLetter += 1;
 			while (si_charIsSpace(*pLetter)) { pLetter += 1; }
-			if ((lexer->__state & SC__STATE_NUM_EXISTS) == 0 && (si_charIsDigit(*pLetter) || si_charIsUnary(*pLetter))) {
-				SILEX_UNARY_ADD(unary, unaryBitLen, SC__UNARY_BIT_TILDE);
-				goto start;
+			if ((lexer->__state & SC__STATE_NUM_EXISTS) == 0) {
+				if (unaryBitLen == -1) {
+					const char* check = pLetter;
+					while (!si_charIsAlphanumeric(*check)) { check += 1; }
+					unaryBitLen = -2 * !si_charIsDigit(*check);
+				}
+
+				if (unaryBitLen != -2) {
+					SILEX_UNARY_ADD(unary, unaryBitLen, SC__UNARY_BIT_TILDE);
+					goto start;
+				}
 			}
 
 			lexer->__state = 0;
@@ -413,11 +430,19 @@ back:
 			while (si_charIsSpace(*pLetter)) { pLetter += 1; }
 
 			b32 isNeg = (*ogChar == '-');
-			if ((lexer->__state & SC__STATE_NUM_EXISTS) == 0 && (si_charIsDigit(*pLetter) || si_charIsUnary(*pLetter))) {
-				if (isNeg) {
-					SILEX_UNARY_ADD(unary, unaryBitLen, SC__UNARY_BIT_MINUS);
+			if ((lexer->__state & SC__STATE_NUM_EXISTS) == 0) {
+				if (unaryBitLen == -1) {
+					const char* check = pLetter;
+					while (!si_charIsAlphanumeric(*check)) { check += 1; }
+					unaryBitLen = -2 * !si_charIsDigit(*check);
 				}
-				goto start;
+
+				if (unaryBitLen != -2) {
+					if (isNeg) {
+						SILEX_UNARY_ADD(unary, unaryBitLen, SC__UNARY_BIT_MINUS);
+					}
+					goto start;
+				}
 			}
 
 			lexer->__state = 0;
@@ -463,7 +488,7 @@ back:
 }
 
 static
-b32 silex__tokenizeConsantInt(scLexer* lexer, const char* pLetter, usize* pUnaryBitLen,
+b32 silex__tokenizeConsantInt(scLexer* lexer, const char* pLetter, isize* pUnaryBitLen,
 		u64* unary) {
 	u64 value = 0;
 	b32 running = true;
@@ -523,9 +548,9 @@ b32 silex__tokenizeConsantInt(scLexer* lexer, const char* pLetter, usize* pUnary
 
 	scConstant* constant = &lexer->token.constant;
 
-	usize unaryBitLen = *pUnaryBitLen;
+	isize unaryBitLen = *pUnaryBitLen;
 	isize i = unaryBitLen;
-	si_printf("%i %i\n", i, i / 32u);
+
 	while (i > 0) {
 		u64* unaryByte = &unary[i / 32u];
 
@@ -547,7 +572,7 @@ b32 silex__tokenizeConsantInt(scLexer* lexer, const char* pLetter, usize* pUnary
 		*unaryByte = 0;
 		i -= 32;
 	}
-	*pUnaryBitLen = 0;
+	*pUnaryBitLen = -1;
 
 	constant->value.integer = value;
 	constant->type = (lexer->__state & SC__STATE_UNSIGNED)

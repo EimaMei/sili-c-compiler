@@ -149,242 +149,218 @@ retry:
 
 }
 
-scOperator sc_actionHandleTokenFront(scAction* action, scTokenStruct* prev,
-		scOperator operator, usize *outI, scTokenStruct** outRight) {
-	usize i = *outI;
-
-	i += 1;
-	scTokenStruct* token2 = si_arrayAt(action->values, i);
-	SI_ASSERT_NOT_NULL(token2);
-
-	while (token2 && token2->type == SILEX_TOKEN_OPERATOR) {
-		if (token2->token.operator == SILEX_OPERATOR_TILDE) {
-			token2->token.operator = SILEX_OPERATOR_MINUS;
-
-			if (prev && prev->type == SILEX_TOKEN_CONSTANT) {
-				prev->token.constant.value.integer -= 1;
-			}
-		}
-
-		if (token2->token.operator == operator) {
-			operator = SILEX_OPERATOR_PLUS;
-		}
-		else {
-			operator = SILEX_OPERATOR_MINUS;
-		}
-
-		i += 1;
-		token2 = si_arrayAt(action->values, i);
+#if 0
+scInitializer* sc_initToLeftMost(scInitializer* init) {
+	scInitializer* root = init;
+	while (root->operator != 0) {
+		SI_STOPIF(root->node.binary.left->operator == 0, break);
+		root = root->node.binary.left;
 	}
 
-	*outI = i;
-	*outRight = token2;
-	return operator;
+    return root;
 }
-#if 0
-	init->type = SC_INIT_BINARY;
-	init->value.binary.left = nil;
-	init->value.binary.operator = operator;
-	init->value.binary.right = token2;
 
-	prevInit = init;
-	init->next = nil;
+
+b32 sc_initPollNode(scInitializer** outRootInit, scInitializer** outValueInit, b32* outIsLeft) {
+	scInitializer* init = *outRootInit;
+	SI_STOPIF(init->operator == 0, return false);
+
+	if (*outIsLeft) {
+		*outValueInit = init->node.binary.left;
+		*outIsLeft = false;
+		return true;
+	}
+	else {
+		*outRootInit = init->parent->node.binary.right;
+		SI_STOPIF(init->parent == *outValueInit, return false);
+
+		*outValueInit = init->node.binary.right;
+		*outIsLeft = true;
+		return true;
+	}
+
+	return false;
+#if 0
+        if (cur->rightThread)
+            cur = cur->right;
+        else // Else go to the leftmost child in right
+             // subtree
+            cur = leftmost(cur->right);i
+    }
+#endif
 }
 #endif
 
-void sc_astNodeMakeEx(scIdentifierKey* key, siArray(scAction) action, usize i) {
+void sc_astHandleUnary(scAction* action, scTokenStruct* token, scAstNode* nextNode,
+		scTokenStruct* nextToken, usize* outI) {
+	nextNode->type = SC_AST_NODE_TYPE_UNARY_OP;
+	nextNode->data.unary.operator = token->token.operator;
+
+	while (nextToken && nextToken->type == SILEX_TOKEN_OPERATOR) {
+		scAstNode* init = si_mallocItem(alloc[SC_MAIN], scAstNode);
+		init->type = SC_AST_NODE_TYPE_UNARY_OP;
+		init->data.unary.operator = nextToken->token.operator;
+
+		nextNode->data.unary.operand = init;
+		nextNode = init;
+
+		*outI += 1;
+		nextToken = si_arrayAt(action->values, *outI);
+	}
+	SI_ASSERT_NOT_NULL(nextToken);
+
+	scAstNode* init = si_mallocItem(alloc[SC_MAIN], scAstNode);
+	init->type = SC_AST_NODE_TYPE_IDENTIFIER;
+	init->data.identifier = nextToken->token.identifier.hash;
+	nextNode->data.unary.operand = init;
+
+}
+//prevNode = ogNextNode;
+
+void sc_astNodeMake(siArray(scAction) action, b32 firstIsIdentifier) {
 	SI_ASSERT_NOT_NULL(action);
 
-	scInitializer* prevInit = nil;
-	scTokenStruct* token;
+	scAstNode* prevNode = nil;
+	for_range (i, firstIsIdentifier, si_arrayLen(action->values)) {
+		scTokenStruct* token = &action->values[i];
+		si_printf("q%i\n", token->type);
+		si_printf("d%i\n", (token + 1)->type);
 
-	scTokenStruct* left = nil;
+		scAstNode* node	= si_mallocItem(alloc[SC_MAIN], scAstNode);
 
-	for ( ; i < si_arrayLen(action->values); i += 1) {
-		token = &action->values[i];
-
-		scInitializer* init = si_mallocItem(alloc[SC_MAIN], scInitializer);
-		if (prevInit != nil) {
-			prevInit->next = init;
-		}
-		else {
-			action->init = init;
-		}
-
-		if (token->type == SILEX_TOKEN_OPERATOR) {
-			if (left == nil) {
-				usize ogI = i - 1;
-
-				while (true) {
-					scTokenStruct* token = si_arrayAt(action->values, i);
-					i += 1;
-
-					if (token == nil) {
-						break;
-					}
-					else if (token->type != SILEX_TOKEN_OPERATOR) {
-						left = token;
-						break;
-					}
-				}
-				SI_ASSERT_NOT_NULL(left);
-
-
-				scTokenStruct* operator = si_arrayAt(action->values, i);
-
-				if (operator == nil) {
-					init->type = SC_INIT_UNARY;
-					init->value.unary.operators = token;
-					init->value.unary.len = left - token;
-					init->value.unary.value = left;
-				}
-				else {
-					scTokenStruct* right;
-					sc_actionHandleTokenFront(action, nil, 0, &i, &right);
-
-
-					scOperator op = sc_actionHandleTokenFront(action, right, operator->token.operator, &ogI, &left);
-
-					init->type = SC_INIT_BINARY;
-					init->value.binary.left = left;
-					init->value.binary.operator = op;
-					init->value.binary.right = right;
-
-					prevInit = init;
-					init->next = nil;
-
-					continue;
-				}
-			}
-			else {
-				scTokenStruct* token2;
-				scOperator operator = sc_actionHandleTokenFront(action, nil, token->token.operator, &i, &token2);
-
-				init->type = SC_INIT_BINARY;
-				init->value.binary.left = nil;
-				init->value.binary.operator = operator;
-				init->value.binary.right = token2;
-
-				prevInit = init;
-				init->next = nil;
-
-				continue;
-			}
-		}
-		else {
-			left = token;
-		}
-
-		i += 1;
-
-		scTokenStruct* token2 = si_arrayAt(action->values, i);
-		if (token2 == nil) {
-			switch (token->type) {
-				case SILEX_TOKEN_CONSTANT: {
-					init->type = SC_INIT_CONSTANT;
-					init->value.constant = left->token.constant;
-					break;
-				}
-				case SILEX_TOKEN_IDENTIFIER: {
-					init->type = SC_INIT_IDENTIFIER;
-					init->value.constant = left->token.constant;
-
-					break;
-				}
-				case SILEX_TOKEN_OPERATOR: {
-#if 0
-					prevInit = init;
-
-					scInitializer* init = si_mallocItem(alloc[SC_AST], scInitializer);
-					prevInit->next = init;
-#endif
-					break;
-				}
-			}
-			continue;
-		}
-
-		scTokenStruct* token3;
-		scOperator operator = sc_actionHandleTokenFront(action, left, token2->token.operator, &i, &token3);
-
-		init->type = SC_INIT_BINARY;
-		init->value.binary.left = left;
-		init->value.binary.operator = operator;
-		init->value.binary.right = token3;
-
-		prevInit = init;
-		init->next = nil;
-
-		//token2 = si_arrayBack(action->values);
-		//token3 = si_arrayBack(action->values);
-
-#if 0
-		scInitializer* init = si_mallocItem(alloc[SC_AST], scInitializer);
-		if (prevInit != nil) {
-			prevInit->next = init;
-		}
-		else {
-			node->init = init;
-		}
-
-		prevInit = init;
-		init->next = nil;
-#endif
-#if 0
 		switch (token->type) {
 			case SILEX_TOKEN_CONSTANT: {
-				//SI_STOPIF(token2 != nil, sc_actionHandleBinary(action, init, token1, token2, &i); break);
-				//init->type = SC_INIT_CONSTANT;
-				//init->value.constant = token->token.constant;
-				break;
-			}
-
-			case SILEX_TOKEN_OPERATOR: {
-				//SI_ASSERT(token2 != nil);
-#if 0
-				if (init == node->init) { /* NOTE(EimaMei): Jei 'init' yra apibrėžimo pradžia. */
-					scTokenStruct* token3 = si_arrayAt(action->values, i + 2);
-					if (token3 == nil) {
-						init->type = SC_INIT_UNARY;
-						init->value.unary.value = token2;
-						init->value.unary.operator = token1->token.operator;
-
-						i += 1;
-						break;
-					}
-					sc_actionHandleTokenFront(action, token1, token3, &i);
-
-					init->type = SC_INIT_BINARY;
-					init->value.binary.left = token3;
-					init->value.binary.operator = token1->token.operator;
-					init->value.binary.right = token2;
-
-					i += 3;
-					break;
-				}
-#endif
-				//init->type = SC_INIT_BINARY;
-				//init->value.binary.left = nil;
-				//init->value.binary.operator = token1->token.operator;
-				//init->value.binary.right = token2;
-
-				//i += 1;
+				node->type = SC_AST_NODE_TYPE_CONSTANT;
+				node->data.constant = token->token.constant;
 				break;
 			}
 			case SILEX_TOKEN_IDENTIFIER: {
-				//SI_STOPIF(token2 != nil, sc_actionHandleBinary(action, init, token1, token2, &i); break);
-				//init->type = SC_INIT_IDENTIFIER;
-				//init->value.identifier = token1->token.identifier.hash;
+				node->type = SC_AST_NODE_TYPE_IDENTIFIER;
+				node->data.identifier = token->token.identifier.hash;
+				break;
+			}
+			case SILEX_TOKEN_OPERATOR: {
+				i += 1;
+				scTokenStruct* nextToken = si_arrayAt(action->values, i);
+				SI_ASSERT_NOT_NULL(nextToken);
+				scAstNode* nextNode = si_mallocItem(alloc[SC_MAIN], scAstNode);
+
+				if (prevNode == nil) {
+					sc_astHandleUnary(action, token, nextNode, nextToken, &i);
+					prevNode = nextNode;
+
+					continue;
+				}
+
+				switch (nextToken->type) {
+					case SILEX_TOKEN_CONSTANT:
+						nextNode->type = SC_AST_NODE_TYPE_CONSTANT;
+						nextNode->data.constant = nextToken->token.constant;
+						break;
+					case SILEX_TOKEN_IDENTIFIER:
+						nextNode->type = SC_AST_NODE_TYPE_IDENTIFIER;
+						nextNode->data.identifier = nextToken->token.identifier.hash;
+						break;
+					case SILEX_TOKEN_OPERATOR:
+						i += 1;
+						sc_astHandleUnary(action, nextToken, nextNode, si_arrayAt(action->values, i), &i);
+						break;
+
+					default: SI_PANIC();
+				}
+				node->type = SC_AST_NODE_TYPE_BINARY_OP;
+				node->data.binary.left = prevNode;
+				node->data.binary.operator = token->token.operator;
+				node->data.binary.right = nextNode;
+				break;
+			}
+			default: si_printf("%i\n", token->type); SI_PANIC();
+		}
+
+		prevNode = node;
+	}
+
+	action->root = prevNode;
+
+#if 0
+		switch (token->type) {
+			case SILEX_TOKEN_OPERATOR: {
+				if (unaryState == false) {
+					init->operator = token->token.operator;
+					init->node.binary.left = prevInit;
+					unaryState = true;
+
+					if (prevInit->operator != 0) {
+						prevInit->parent = init;
+					}
+					break;
+				}
+
+				scInitializer* ogPrevInit = (prevInit->operator != 0)
+					? prevInit
+					: init;
+				scInitializer* start = init;
+
+				init->operator = token->token.operator;
+				prevInit = init;
+				i += 1;
+
+				while (true) {
+					token = &action->values[i];
+					SI_STOPIF(token->type != SILEX_TOKEN_OPERATOR, break);
+
+					init = si_mallocItem(alloc[SC_MAIN], scInitializer);
+					init->operator = token->token.operator;
+					init->parent = start;
+
+					prevInit->node.binary.left = init;
+					prevInit->node.binary.right = nil;
+
+					prevInit = init;
+					i += 1;
+				}
+
+				scInitializer* leftInit = si_mallocItem(alloc[SC_MAIN], scInitializer);
+				leftInit->operator = 0;
+				leftInit->node.value = token;
+				leftInit->parent = start;
+
+				prevInit->node.binary.left = leftInit;
+				prevInit->node.binary.right = nil;
+
+				i += 1;
+				token = si_arrayAt(action->values, i);
+
+				if (token != nil) {
+					init = si_mallocItem(alloc[SC_MAIN], scInitializer);
+					init->operator = token->token.operator;
+					init->node.binary.left = start;
+					init->parent = ogPrevInit;
+					ogPrevInit->node.binary.right = init;
+				}
+				else {
+					ogPrevInit->node.binary.right = start;
+				}
+
+				unaryState = true;
+
 				break;
 			}
 
+			default: {
+				init->operator = 0;
+				init->node.value = token;
+				unaryState = false;
 
-			default: SI_PANIC();
+				if (prevInit->operator != 0) {
+					prevInit->node.binary.right = init;
+					init = prevInit;
+				}
+			}
 		}
-#endif
 
-		SI_LOG("[Complete]\n");
-	}
+		prevInit = init;
+#endif
 }
 
 scVariable* sc_variableGet(scInfoTable* scope, u64 hash, i32* res) {
@@ -409,12 +385,13 @@ scVariable* sc_variableGetAndOptimizeToken(scInfoTable* scope, scTokenStruct* to
 
 	scVariable* var = sc_variableGet(scope, token->token.identifier.hash, res);
 	SI_STOPIF(var == nil, return nil);
-
+#if 0
 	if (var->init && var->init->type == SC_INIT_CONSTANT) {
 		//SI_PANIC();
 		//token->type = SILEX_TOKEN_CONSTANT;
 		//token->token.constant = var->init->value.constant;
 	}
+#endif
 
 	*res = 0;
 	return var;

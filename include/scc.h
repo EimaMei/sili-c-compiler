@@ -5,7 +5,7 @@
 #include <sili.h>
 #include <sililex.h>
 
-
+#if 0
 typedef SI_ENUM(u32, scInitializerType) {
 	SC_INIT_BINARY = 1,
 	SC_INIT_CONSTANT,
@@ -17,23 +17,38 @@ typedef struct {
 	scTokenStruct* operators;
 	usize len;
 	scTokenStruct* value;
-} scExprUnary;
+} scUnary;
 
-typedef struct scInitializer {
-	scInitializerType type;
+typedef struct {
+	scTokenStruct* left;
+	scTokenStruct* right;
+} scBinary;
+#endif
+
+typedef SI_ENUM(i32, scAstNodeType) {
+	SC_AST_NODE_TYPE_IDENTIFIER = 1,
+	SC_AST_NODE_TYPE_CONSTANT,
+	SC_AST_NODE_TYPE_BINARY_OP,
+	SC_AST_NODE_TYPE_UNARY_OP,
+};
+
+typedef struct scAstNode {
+	scAstNodeType type;
 	union {
-		scConstant constant;
 		u64 identifier;
+		scConstant constant;
 		struct {
+			struct scAstNode* left;
+			struct scAstNode* right;
 			scOperator operator;
-			scTokenStruct* left;
-			scTokenStruct* right;
 		} binary;
-		scExprUnary unary;
-	} value;
-	struct scInitializer* next;
-} scInitializer;
-SI_STATIC_ASSERT(sizeof(scInitializer) == 40);
+		struct {
+			struct scAstNode* operand;
+			scOperator operator;
+		} unary;
+	} data;
+} scAstNode;
+//SI_STATIC_ASSERT(sizeof(scInitializer) == 40);
 
 typedef SI_ENUM(u16, scIdentifierKeyType) {
 	SC_IDENTIFIER_KEY_FUNC = 1,
@@ -65,7 +80,7 @@ typedef SI_ENUM(u32, scActionType) {
 typedef struct {
 	scActionType type;
 	scTokenStruct* values;
-	scInitializer* init;
+	scAstNode* root;
 } scAction;
 
 
@@ -89,7 +104,6 @@ SI_STATIC_ASSERT(sizeof(scType) == 24);
 
 typedef struct {
 	scType type;
-	scInitializer* init;
 	u32 location;
 } scVariable;
 
@@ -332,8 +346,7 @@ void sc_constantArithmetic(scConstant* constant, scOperator operator, scConstant
 scPunctuator sc_actionAddValues(scLexer* lex, scAction* action);
 
 /* */
-#define sc_astNodeMake(key, action) sc_astNodeMakeEx(key, action, 0)
-void sc_astNodeMakeEx(scIdentifierKey* key, siArray(scAction) action, usize i);
+void sc_astNodeMake(siArray(scAction) action, b32 firstIsIdentifier);
 
 /* */
 scVariable* sc_variableGet(scInfoTable* scope, u64 hash, i32* res);

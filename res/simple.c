@@ -1,11 +1,11 @@
 
 typedef signed char i8;
-typedef signed char i16;
+typedef signed short i16;
 typedef signed int i32;
 typedef signed long i64;
 
 typedef unsigned char u8;
-typedef unsigned char u16;
+typedef unsigned short u16;
 typedef unsigned int u32;
 typedef unsigned long u64;
 
@@ -16,7 +16,7 @@ i32 func(i32 x);
 
 
 i32 main(i32 argc, cstring* argv) {
-	int x = 9 - 5 - 2;
+	int x = -222 + 2 + ~argc;
 	return x;
 }
 
