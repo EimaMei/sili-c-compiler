@@ -5,25 +5,6 @@
 #include <sili.h>
 #include <sililex.h>
 
-#if 0
-typedef SI_ENUM(u32, scInitializerType) {
-	SC_INIT_BINARY = 1,
-	SC_INIT_CONSTANT,
-	SC_INIT_IDENTIFIER,
-	SC_INIT_UNARY,
-};
-
-typedef struct {
-	scTokenStruct* operators;
-	usize len;
-	scTokenStruct* value;
-} scUnary;
-
-typedef struct {
-	scTokenStruct* left;
-	scTokenStruct* right;
-} scBinary;
-#endif
 
 typedef SI_ENUM(i32, scAstNodeType) {
 	SC_AST_NODE_TYPE_IDENTIFIER = 1,
@@ -48,7 +29,6 @@ typedef struct scAstNode {
 		} unary;
 	} data;
 } scAstNode;
-//SI_STATIC_ASSERT(sizeof(scInitializer) == 40);
 
 typedef SI_ENUM(u16, scIdentifierKeyType) {
 	SC_IDENTIFIER_KEY_FUNC = 1,
@@ -164,7 +144,6 @@ typedef SI_ENUM(u32, scAsmType) {
 	SC_ASM_POP_R64,
 
 
-
 	SC_ASM_LD_M8_PARAM,
 	SC_ASM_LD_M16_PARAM,
 	SC_ASM_LD_M32_PARAM,
@@ -191,13 +170,16 @@ typedef SI_ENUM(u32, scAsmType) {
 	SC_ASM_LD_M32_M32,
 	SC_ASM_LD_M64_M32,
 
+	SC_ASM_LD_M8_R8 = SC_ASM_LD_M8_M8 + 4,
 
 
-	SC_ASM_ARITH_R64_M64,
+	SC_ASM_ARITH_R64_M64 = SC_ASM_LD_M8_R8 + 4,
 
 
+	SC_ASM_ADD_R8_R8 = SC_ASM_ARITH_R64_M64 + 4,
+	SC_ASM_SUB_R8_R8 = SC_ASM_ADD_R8_R8 + 4,
 
-	SC_ASM_ADD_R8_I8,
+	SC_ASM_ADD_R8_I8 = SC_ASM_SUB_R8_R8 + 4,
 	SC_ASM_ADD_R16_I16,
 	SC_ASM_ADD_R32_I32,
 	SC_ASM_ADD_R64_I64,
@@ -218,8 +200,10 @@ typedef SI_ENUM(u32, scAsmType) {
 	SC_ASM_SUB_R32_M32,
 	SC_ASM_SUB_R64_M64,
 
+	SC_ASM_ADD_M8_R8 = SC_ASM_SUB_R8_M8 + 4,
+	SC_ASM_SUB_M8_R8 = SC_ASM_ADD_M8_R8 + 4,
 
-	SC_ASM_ADD_M8_I8,
+	SC_ASM_ADD_M8_I8 = SC_ASM_SUB_M8_R8 + 4,
 	SC_ASM_ADD_M16_I16,
 	SC_ASM_ADD_M32_I32,
 	SC_ASM_ADD_M64_I64,
@@ -240,7 +224,7 @@ typedef SI_ENUM(u32, scAsmType) {
 	SC_ASM_SUB_M32_M32,
 	SC_ASM_SUB_M64_M64,
 
-	SC_ASM_NEG_R8,
+	SC_ASM_NEG_R8 = SC_ASM_SUB_M8_M8 + 4,
 	SC_ASM_NEG_M8 = SC_ASM_NEG_R8 + 4,
 
 	SC_ASM_NOT_R8 = SC_ASM_NEG_M8 + 4,
@@ -248,7 +232,7 @@ typedef SI_ENUM(u32, scAsmType) {
 
 	SC_ASM_CALL = SC_ASM_NOT_M8 + 4,
 
-	SC_ASM_RET_R8,
+	SC_ASM_RET_R8 = SC_ASM_CALL + 4,
 	SC_ASM_RET_R16,
 	SC_ASM_RET_R32,
 	SC_ASM_RET_R64,
@@ -268,8 +252,7 @@ typedef SI_ENUM(u32, scAsmType) {
 };
 
 typedef struct {
-	scAsmType type : 24;
-	u8 typeInfo : 8;
+	scAsmType type;
 	u32 dst;
 	u32 src;
 } scAsm;
@@ -309,7 +292,8 @@ extern scType type_double;
 		SI_ASSERT(bytes <= limit); \
 	} while (0)
 
-#define SC_RETURN_REGISTER 0
+#define SC_ASM_REG_ANY (UINT32_MAX - 1)
+#define SC_ASM_REG_RET UINT32_MAX
 
 #define sc_typeCmp(t1, t2) ((t1)->size == (t2)->size && SI_TO_U64((isize*)(t1) + 1) == SI_TO_U64((isize*)(t2) + 1))
 #define sc_typeIsVoid(type) ((type)->size == 0)

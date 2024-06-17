@@ -16,8 +16,7 @@ i32 func(i32 x);
 
 
 i32 main(i32 argc, cstring* argv) {
-	int x = -222 + 2 + ~argc;
-	return x;
+	return -222 + 2 + ~argc;
 }
 
 

@@ -53,17 +53,17 @@ typedef struct {
 #define X86_PUSH_R64 0x50
 #define X86_POP_R64 0x58
 
-#define X86_ADD_RM32_R32 0x01
-
-#define X86_ADD_R32_RM32 0x03
+#define X86_ADD_RM8_R8 0x00
+#define X86_ADD_R8_RM8 0x02
 
 #define X86_ADD_RM32_I32 0x81
 
 
-#define X86_SUB_RM32_R32 0x29
+#define X86_SUB_RM8_R8 0x28
+#define X86_SUB_R8_RM8 0x2A
 
-#define X86_SUB_R32_RM32 0x2B
-
+#define X86_SUB_RM8_R8 0x28
+#define X86_SUB_RM8_R8 0x28
 #define X86_SUB_RM32_I32 0x81
 
 
@@ -89,11 +89,6 @@ typedef struct {
 
 #define X86_SYSCALL 0x0F05
 
-
-typedef SI_ENUM(u32, x86Instruction) {
-	X86_ADD_RM_I8,
-	X86_ADD_RM_I32,
-};
 
 typedef SI_ENUM(u8, x86ModRM_MOD) {
 	X86_MOD_RM_MOD_M8 = 1,
@@ -162,6 +157,9 @@ typedef SI_ENUM(u32, x86Config) {
 
 void sc_x86OpcodeEx(x86EnvironmentState* state,  u8 opcode, u32 dst, u32 src, u8 sibReg,
 	x86Config config);
+
+x86Register sc_x86PickAvailableReg(x86EnvironmentState* state);
+
 
 force_inline
 void sc_x86Opcode(x86EnvironmentState* state, u8 opcode, u32 dst, u32 src, x86Config config) {
@@ -256,7 +254,14 @@ void sc_x86OpcodeEx(x86EnvironmentState* state, u8 opcode, u32 dst, u32 src, u8 
 			}
 			memcpy(&out[i], &val, 1), i += 1;
 		}
-		else if (mod == X86_MOD_RM_MOD_M32) { SI_PANIC(); }
+		else if (mod == X86_MOD_RM_MOD_M32) {
+			SI_PANIC();
+			u32 val = (config & X86_CFG_SRC_M) ? src : dst;
+			if ((config & X86_CFG_SRC_M_NOT_NEG) == 0) {
+				val = -val;
+			}
+			memcpy(&out[i], &val, 4), i += 4;
+		}
 
 	}
 
@@ -304,10 +309,38 @@ x86Register sc_x86PickFunctionArg(x86EnvironmentState* state) {
 	}
 }
 
+b32 sc_x86PollAvailableReg(x86EnvironmentState* state, x86Register* out) {
+	switch (state->conv) {
+		case X86_CALLING_CONV_SYSTEM_V_X86: {
+			u32 reg = SI_BIT(*out);
+
+			if ((state->registers & reg) == 0) {
+				return true;
+			}
+			*out = UINT32_MAX;
+			break;
+		}
+		default: SI_PANIC();
+	}
+
+	return false;
+}
+
+
 x86Register sc_x86RegisterConvert(x86EnvironmentState* x86, i32 reg) {
 	switch (x86->conv) {
 		case X86_CALLING_CONV_SYSTEM_V_X86: {
-			SI_STOPIF(reg == SC_RETURN_REGISTER, return RAX);
+			switch (reg) {
+				case SC_ASM_REG_RET: return RAX;
+				case SC_ASM_REG_ANY: {
+					x86Register reg = 0;
+					while (sc_x86PollAvailableReg(x86, &reg)) {
+						SI_STOPIF(reg != RAX, break);
+						reg += 1;
+					}
+					return reg;
+				}
+			}
 			break;
 		}
 		default: SI_PANIC();

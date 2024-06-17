@@ -69,61 +69,85 @@ void x86_OP_M32_M32_EX(x86EnvironmentState* x86, scAsm* instruction, u8 opcode, 
 }
 
 
-#define X86_ASM_TEMPLATE_RMB_EX(x86, type, baseOpcode, instruction, extra, extra8bit, extra16bit, extra32bit, extra64bit) \
+#define X86_ASM_TEMPLATE(x86, type, baseOpcode, instruction, extra, extra8bit, \
+		extra16bit, extra32bit, extra64bit, dst, src) \
 	case (type): { \
-		x86Register reg = sc_x86RegisterConvert((x86), (instruction)->dst); \
 		sc_x86Opcode( \
-			x86, baseOpcode, reg, (instruction)->src, \
-			X86_CFG_RMB | (extra) |(extra8bit) \
+			x86, baseOpcode, dst, src, \
+			(extra) |(extra8bit) \
 		); \
 		break; \
 	} \
 	case (type + 1): { \
-		x86Register reg = sc_x86RegisterConvert((x86), (instruction)->dst); \
 		sc_x86Opcode( \
-			x86, baseOpcode, reg, (instruction)->src, \
-			X86_CFG_RMB | (extra) | (extra16bit) \
+			x86, baseOpcode, dst, src, \
+			(extra) | (extra16bit) \
 		); \
 		break; \
 	} \
 	case (type) + 2: { \
-		x86Register reg = sc_x86RegisterConvert((x86), (instruction)->dst); \
 		sc_x86Opcode( \
-			x86, (baseOpcode) + 1, reg, (instruction)->src, \
-			X86_CFG_RMB | (extra) | (extra32bit) \
+			x86, (baseOpcode) + 1, dst, src, \
+			(extra) | (extra32bit) \
 		); \
 		break; \
 	} \
 	case (type) + 3: { \
-		x86Register reg = sc_x86RegisterConvert((x86), (instruction)->dst); \
 		sc_x86Opcode( \
-			x86, (baseOpcode) + 1, reg, (instruction)->src, \
-			X86_CFG_RMB |  X86_CFG_64BIT | (extra) | (extra64bit) \
+			x86, (baseOpcode) + 1, dst, src, \
+			X86_CFG_64BIT | (extra) | (extra64bit) \
 		); \
 		break; \
 	} \
 
-#define X86_ASM_TEMPLATE_RMB(x86, type, baseOpcode, instruction, extra) \
-	X86_ASM_TEMPLATE_RMB_EX(x86, type, baseOpcode, instruction, extra, 0, 0, 0, 0)
+#define X86_ASM_TEMPLATE_RMB(x86, type, baseOpcode, instruction, extra, extra8bit, \
+		extra16bit, extra32bit, extra64bit, dst, src) \
+	X86_ASM_TEMPLATE( \
+		x86, type, baseOpcode, instruction, (X86_CFG_RMB) | (extra), \
+		extra8bit, extra16bit, extra32bit, extra64bit, dst, src \
+	)
 
-#define X86_ASM_TEMPLATE_R_M(x86, type, baseOpcode, instruction) \
-	X86_ASM_TEMPLATE_RMB(x86, type, baseOpcode, instruction, X86_CFG_DST_R | X86_CFG_DST_M)
+#define X86_ASM_TEMPLATE_RMB__REG(x86, type, baseOpcode, instruction, extra) \
+	X86_ASM_TEMPLATE_RMB( \
+		x86, type, baseOpcode, instruction, X86_CFG_DST_R | (extra), 0, 0, 0, 0, \
+		sc_x86RegisterConvert(x86, (instruction)->dst), 0 \
+	)
 
-#define X86_ASM_TEMPLATE_R_EX(x86, type, baseOpcode, instruction, extra) \
-	X86_ASM_TEMPLATE_RMB(x86, type, baseOpcode, instruction, X86_CFG_DST_R | (extra))
+#define X86_ASM_TEMPLATE_RMB__REG_MEM(x86, type, baseOpcode, instruction) \
+	X86_ASM_TEMPLATE_RMB( \
+		x86, type, baseOpcode, instruction, X86_CFG_DST_R | X86_CFG_SRC_M, 0, 0, 0, 0, \
+		sc_x86RegisterConvert(x86, (instruction)->dst), (instruction)->src \
+	)
 
-#define X86_ASM_TEMPLATE_M_EX(x86, type, baseOpcode, instruction, extra) \
-	X86_ASM_TEMPLATE_RMB(x86, type, baseOpcode, instruction, X86_CFG_DST_M | (extra))
-
-#define X86_ASM_TEMPLATE_R(x86, type, baseOpcode, instruction) \
-	X86_ASM_TEMPLATE_RMB(x86, type, baseOpcode, instruction, X86_CFG_DST_R)
-
-#define X86_ASM_TEMPLATE_M(x86, type, baseOpcode, instruction) \
-	X86_ASM_TEMPLATE_RMB(x86, type, baseOpcode, instruction, X86_CFG_DST_M)
+#define X86_ASM_TEMPLATE_RMB__REG_ID(x86, type, baseOpcode, instruction) \
+	X86_ASM_TEMPLATE_RMB( \
+		x86, type, baseOpcode, instruction, X86_CFG_DST_R, X86_CFG_IB, X86_CFG_IW, X86_CFG_ID, 0, \
+		sc_x86RegisterConvert(x86, (instruction)->dst), (instruction)->src \
+	)
 
 
-#define X86_ASM_TEMPLATE_M_I(x86, type, baseOpcode, instruction) \
-	X86_ASM_TEMPLATE_RMB_EX(x86, type, baseOpcode, instruction, X86_CFG_DST_M, X86_CFG_IB, X86_CFG_IW, X86_CFG_ID, X86_CFG_ID)
+
+#define X86_ASM_TEMPLATE_MEM_ID(x86, type, baseOpcode, instruction) \
+	X86_ASM_TEMPLATE_RMB( \
+		x86, type, baseOpcode, instruction, X86_CFG_DST_M, X86_CFG_IB, X86_CFG_IW, X86_CFG_ID, X86_CFG_ID, \
+		(instruction)->dst, (instruction)->src \
+	)
+#define X86_ASM_TEMPLATE_RMB__MEM(x86, type, baseOpcode, instruction, extra) \
+	X86_ASM_TEMPLATE_RMB( \
+		x86, type, baseOpcode, instruction, X86_CFG_DST_M | (extra), 0, 0, 0, 0, \
+		(instruction)->dst, 0 \
+	)
+#define X86_ASM_TEMPLATE_RMB__MEM_REG(x86, type, baseOpcode, instruction) \
+	X86_ASM_TEMPLATE_RMB( \
+		x86, type, baseOpcode, instruction, X86_CFG_DST_M | X86_CFG_SRC_R, 0, 0, 0, 0, \
+		(instruction)->dst, sc_x86RegisterConvert(x86, (instruction)->src) \
+	)
+
+#define X86_ASM_TEMPLATE_RMB__REG_REG(x86, type, baseOpcode, instruction) \
+	X86_ASM_TEMPLATE_RMB( \
+		x86, type, baseOpcode, instruction, X86_CFG_DST_R | X86_CFG_SRC_R, 0, 0, 0, 0, \
+		sc_x86RegisterConvert(x86, (instruction)->dst), sc_x86RegisterConvert(x86, (instruction)->src) \
+	)
 
 
 void sc_astNodeToAsm(scInfoTable* scope, scAsm* instructions, scOperator assignment,
@@ -178,46 +202,81 @@ void sc_astNodeToAsm(scInfoTable* scope, scAsm* instructions, scOperator assignm
 		case SC_AST_NODE_TYPE_UNARY_OP: {
 			scOperator operator = node->data.unary.operator;
 			node = node->data.unary.operand;
-			sc_astNodeToAsm(scope, instructions, assignment, asmTypes, typeSize, action, node, key, regSrc);
 
-			switch (operator) {
-				case SILEX_OPERATOR_MINUS: {
-					asm.type = sc_asmGetCorrectType(SC_ASM_NEG_M8, typeSize);
-					asm.dst = ((scAsm*)si_arrayBack(instructions))->dst;
-					asm.src = 0;
-					si_arrayPush(&instructions, asm);
+			if (asmTypes[2] == 0 || node->type == SC_AST_NODE_TYPE_UNARY_OP) {
+				sc_astNodeToAsm(scope, instructions, assignment, asmTypes, typeSize, action, node, key, regSrc);
 
-					break;
+				switch (operator) {
+					case SILEX_OPERATOR_MINUS: {
+						asm.type = sc_asmGetCorrectType(SC_ASM_NEG_M8, typeSize);
+						asm.dst = ((scAsm*)si_arrayBack(instructions))->dst;
+						asm.src = 0;
+						si_arrayPush(&instructions, asm);
+
+						break;
+					}
+					case SILEX_OPERATOR_TILDE: {
+						asm.type = sc_asmGetCorrectType(SC_ASM_NOT_M8, typeSize);
+						asm.dst = ((scAsm*)si_arrayBack(instructions))->dst;
+						asm.src = 0;
+						si_arrayPush(&instructions, asm);
+
+						break;
+					}
+					default: SI_PANIC();
 				}
-				case SILEX_OPERATOR_TILDE: {
-					asm.type = sc_asmGetCorrectType(SC_ASM_NOT_M8, typeSize);
-					asm.dst = ((scAsm*)si_arrayBack(instructions))->dst;
-					asm.src = 0;
-					si_arrayPush(&instructions, asm);
-
-					break;
-				}
-				default: si_printf("qwe: %i\n", node->data.unary.operator); SI_PANIC();
+				break;
 			}
 
+			u64 hash = node->data.identifier;
+			scIdentifierKey* srcKey = si_hashtableGetWithHash(scope->identifiers, hash);
+			SI_ASSERT(srcKey->type != SC_IDENTIFIER_KEY_FUNC);
+
+			scVariable* src = (scVariable*)srcKey->identifier;
+
+			asm.type = sc_asmGetCorrectType(SC_ASM_LD_R8_M8, typeSize);
+			asm.dst = SC_ASM_REG_ANY;
+			asm.src = src->location;
+			si_arrayPush(&instructions, asm);
+
+			asm.type = sc_asmGetCorrectType(SC_ASM_NOT_R8, typeSize);
+			si_arrayPush(&instructions, asm);
+
+			asm.type = sc_asmGetCorrectType(asmTypes[2], typeSize);
+
+			if (key != nil) {
+				SI_ASSERT(key->type == SC_IDENTIFIER_KEY_VAR);
+				asm.src = ((scVariable*)key->identifier)->location;
+			}
+			else {
+				asm.src = 0;
+			}
+
+			si_arrayPush(&instructions, asm);
 			break;
 		}
 
 		case SC_AST_NODE_TYPE_BINARY_OP: {
 			scOperator operator = node->data.binary.operator;
-			scAsmType typesLD[2];
-			scAsmType typesOP[2];
+			scAsmType typesLD[3];
+			scAsmType typesOP[3];
 			if (key != nil) {
 				typesLD[0] = !assignment ? SC_ASM_LD_M8_I8 : sc_asmGetCorrectOperator(SC_ASM_ADD_M8_I8, assignment);
 				typesLD[1] = !assignment ? SC_ASM_LD_M8_M8 : sc_asmGetCorrectOperator(SC_ASM_ADD_M8_M8, assignment);
+				typesLD[2] = !assignment ? 0 : sc_asmGetCorrectOperator(SC_ASM_ADD_M8_R8, assignment);
+
 				typesOP[0] = sc_asmGetCorrectOperator(SC_ASM_ADD_M8_I8, operator);
 				typesOP[1] = sc_asmGetCorrectOperator(SC_ASM_ADD_M8_M8, operator);
+				typesOP[2] = sc_asmGetCorrectOperator(SC_ASM_ADD_M8_R8, operator);
 			}
 			else {
 				typesLD[0] = !assignment ? SC_ASM_LD_R8_I8 : sc_asmGetCorrectOperator(SC_ASM_ADD_R8_I8, assignment);
 				typesLD[1] = !assignment ? SC_ASM_LD_R8_M8 : sc_asmGetCorrectOperator(SC_ASM_ADD_R8_M8, assignment);
+				typesLD[2] = !assignment ? 0 : sc_asmGetCorrectOperator(SC_ASM_ADD_R8_R8, assignment);
+
 				typesOP[0] = sc_asmGetCorrectOperator(SC_ASM_ADD_R8_I8, operator);
 				typesOP[1] = sc_asmGetCorrectOperator(SC_ASM_ADD_R8_M8, operator);
+				typesOP[2] = sc_asmGetCorrectOperator(SC_ASM_ADD_R8_R8, operator);
 			}
 
 			scAsmType* types[2] = {typesLD, typesOP};
@@ -227,7 +286,6 @@ void sc_astNodeToAsm(scInfoTable* scope, scAsm* instructions, scOperator assignm
 			sc_astNodeToAsm(scope, instructions, assignment, types[1], typeSize, action, node->data.binary.right, key, regSrc);
 
 			if (key == nil) {
-				SI_PANIC();
 				asm.type = sc_asmGetCorrectType(asmTypes[2], typeSize);
 				asm.dst = 0;
 				asm.src = regSrc;
@@ -261,7 +319,7 @@ void sc_astNodeOptimize(scAstNode* node) {
 				break;
 			case SC_AST_NODE_TYPE_UNARY_OP: {
 				scOperator operator = arg->data.unary.operator;
-
+#if 0
 				if (operator == SILEX_OPERATOR_TILDE) {
 					operator = SILEX_OPERATOR_MINUS;
 
@@ -277,6 +335,7 @@ void sc_astNodeOptimize(scAstNode* node) {
 					node->data.binary.operator = SILEX_OPERATOR_MINUS;
 					*arg = *arg->data.unary.operand;
 				}
+#endif
 				break;
 			}
 			case SC_AST_NODE_TYPE_CONSTANT: {
@@ -332,118 +391,6 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 
 		sc_astNodeOptimize(action->root);
 	}
-#if 0
-	for_range (i, 0, si_arrayLen(ast)) {
-		break;
-		scAstNode* node = &ast[i];
-		prevInit = nil;
-
-		scInitializer* start = node->init;
-		scInitializer* init = start;
-
-		while (init != nil) {
-			switch (init->type) {
-				case SC_INIT_BINARY: {
-					scTokenStruct* left = init->node.binary.left,
-								  *right = init->node.binary.right;
-
-					if (left == nil) {
-						switch (prevInit->type) {
-							case SC_INIT_CONSTANT: {
-								scConstant constant = prevInit->value.constant;
-								left = init->node.binary.left = prevTokenStruct[0];
-
-								left->type = SILEX_TOKEN_CONSTANT;
-								left->token.constant = constant;
-
-								if (start == prevInit) {
-									node->init = init;
-								}
-								else  {
-									*prevInit = *init;
-								}
-
-								break;
-							}
-							case SC_INIT_UNARY: {
-								i32 err;
-								sc_variableGetAndOptimizeToken(scope, right, &err);
-								sc_variableErrorCheck(err);
-
-								prevInit = init;
-								init = init->next;
-
-								continue;
-							}
-							case SC_INIT_BINARY: {
-								for_range (i, 0, countof(prevTokenStruct)) {
-									left = prevTokenStruct[i];
-
-									if (left->type == SILEX_TOKEN_CONSTANT && left->type == right->type) {
-										prevInit->next = init->next;
-										init = prevInit;
-										break;
-									}
-								}
-								i32 err;
-								sc_variableGetAndOptimizeToken(scope, right, &err);
-								sc_variableErrorCheck(err);
-
-								prevInit = init;
-								init = init->next;
-
-								continue;
-							}
-							default: SI_PANIC();
-						}
-					}
-					else {
-						i32 err;
-						scVariable* leftVar = sc_variableGetAndOptimizeToken(scope, left, &err);
-						sc_variableErrorCheck(err);
-					}
-					i32 err;
-					scVariable* rightVar = sc_variableGetAndOptimizeToken(scope, right, &err);
-					sc_variableErrorCheck(err);
-
-					prevTokenStruct[0] = left;
-					prevTokenStruct[1] = right;
-
-					if (left->type == SILEX_TOKEN_CONSTANT && left->type == right->type) {
-						scOperator op = init->node.binary.operator;
-						init->value.constant = left->token.constant;
-
-						sc_constantArithmetic(&left->token.constant, op, right->token.constant);
-						init->type = SC_INIT_CONSTANT;
-						init->value.constant = left->token.constant;
-					}
-
-					break;
-				}
-				case SC_INIT_IDENTIFIER: {
-					u64 hash = init->value.identifier;
-					i32 err;
-					scVariable* var = sc_variableGet(scope, hash, &err);
-					sc_variableErrorCheck(err);
-
-					if (var->init && var->init->type == SC_INIT_CONSTANT) {
-						//SI_PANIC();
-						//init->type = SC_INIT_CONSTANT;
-						//init->value = var->init->value;
-					}
-
-					break;
-				}
-				case SC_INIT_UNARY:
-				case SC_INIT_CONSTANT: break;
-				default: SI_PANIC();
-			}
-
-			prevInit = init;
-			init = init->next;
-		}
-	}
-#endif
 	SI_LOG("== AST node optimizations have been implemented ==\n");
 
 	scAsm asm;
@@ -521,14 +468,12 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 					scope, instructions, 0,
 					si_buf(u32, SC_ASM_RET_I8, SC_ASM_RET_M8, SC_ASM_RET_R8),
 					func->type.size, action, action->root, nil,
-					SC_RETURN_REGISTER
+					SC_ASM_REG_RET
 				);
 				break;
 			}
 			default: SI_PANIC();
 		}
-
-		SI_LOG("[Complete]\n");
 	}
 	SI_LOG("== Parse complete  ==\n");
 }
@@ -985,6 +930,7 @@ type_section_start:
 
 					case ';':
 						si_printf("Found a variable that exists.\n");
+						SI_PANIC();
 						break;
 					default: si_printf("%c\n", lex.token.punctuator); SI_PANIC();
 				}
@@ -1167,27 +1113,29 @@ keyword_section:
 				break;
 			}
 
-			case SC_ASM_LD_R32_I32: {
-				sc_x86Opcode(
-					&x86, X86_MOV_RM32_I32, instruction->dst, instruction->src,
-					X86_CFG_RMB | X86_CFG_ID | X86_CFG_DST_R
-				);
-				break;
-			}
+			X86_ASM_TEMPLATE_RMB__REG_MEM(&x86, SC_ASM_LD_R8_M8, X86_MOV_R8_RM8, instruction)
+			X86_ASM_TEMPLATE_RMB__REG_ID(&x86, SC_ASM_LD_R8_I8, X86_MOV_RM8_I8, instruction)
+			X86_ASM_TEMPLATE_MEM_ID(&x86, SC_ASM_LD_M8_I8, X86_MOV_RM8_I8, instruction)
 
-			X86_ASM_TEMPLATE_R_M(&x86, SC_ASM_LD_R8_M8, X86_MOV_R8_RM8, instruction)
-			X86_ASM_TEMPLATE_M_I(&x86, SC_ASM_LD_M8_I8, X86_MOV_RM8_I8, instruction)
+			X86_ASM_TEMPLATE_RMB__MEM_REG(&x86, SC_ASM_ADD_M8_R8, X86_ADD_RM8_R8, instruction)
+			X86_ASM_TEMPLATE_RMB__MEM_REG(&x86, SC_ASM_SUB_M8_R8, X86_SUB_RM8_R8, instruction)
 
-			X86_ASM_TEMPLATE_R_EX(&x86, SC_ASM_NEG_R8, X86_NEG_RM8, instruction, X86_CFG_NOTATION_3)
-			X86_ASM_TEMPLATE_M_EX(&x86, SC_ASM_NEG_M8, X86_NEG_RM8, instruction, X86_CFG_NOTATION_3)
+			X86_ASM_TEMPLATE_RMB__REG_REG(&x86, SC_ASM_ADD_R8_R8, X86_ADD_R8_RM8, instruction)
+			X86_ASM_TEMPLATE_RMB__REG_REG(&x86, SC_ASM_SUB_R8_R8, X86_SUB_R8_RM8, instruction)
 
-			X86_ASM_TEMPLATE_R_EX(&x86, SC_ASM_NOT_R8, X86_NOT_RM8, instruction, X86_CFG_NOTATION_2)
-			X86_ASM_TEMPLATE_M_EX(&x86, SC_ASM_NOT_M8, X86_NOT_RM8, instruction, X86_CFG_NOTATION_2)
+			X86_ASM_TEMPLATE_RMB__REG_MEM(&x86, SC_ASM_ADD_R8_M8, X86_ADD_R8_RM8, instruction)
+			X86_ASM_TEMPLATE_RMB__REG_MEM(&x86, SC_ASM_SUB_R8_M8, X86_SUB_R8_RM8, instruction)
+
+			X86_ASM_TEMPLATE_RMB__REG(&x86, SC_ASM_NOT_R8, X86_NOT_RM8, instruction, X86_CFG_NOTATION_2)
+			X86_ASM_TEMPLATE_RMB__MEM(&x86, SC_ASM_NOT_M8, X86_NOT_RM8, instruction, X86_CFG_NOTATION_2)
+
+			//X86_ASM_TEMPLATE_R_EX(&x86, SC_ASM_NOT_M8, X86_NOT_RM8, instruction, X86_CFG_NOTATION_2)
 
 
 			case SC_ASM_LD_M32_M32:
 				x86_OP_M32_M32(&x86, instruction, X86_MOV_RM32_R32);
 				break;
+
 
 			case SC_ASM_ADD_R32_I32: {
 				x86Register reg = sc_x86RegisterConvert(&x86, instruction->dst);
@@ -1207,24 +1155,6 @@ keyword_section:
 				break;
 			}
 
-			case SC_ASM_ADD_R32_M32: {
-				x86Register reg = sc_x86RegisterConvert(&x86, instruction->dst);
-				sc_x86Opcode(
-					&x86, X86_ADD_R32_RM32, reg, instruction->src,
-					X86_CFG_RMB | X86_CFG_DST_R | X86_CFG_SRC_M
-				);
-				break;
-			}
-
-			case SC_ASM_SUB_R32_M32: {
-				x86Register reg = sc_x86RegisterConvert(&x86, instruction->dst);
-				sc_x86Opcode(
-					&x86, X86_SUB_R32_RM32, reg, instruction->src,
-					X86_CFG_RMB | X86_CFG_DST_R | X86_CFG_SRC_M
-				);
-				break;
-			}
-
 			case SC_ASM_ADD_M32_I32: {
 				sc_x86Opcode(
 					&x86, X86_ADD_RM32_I32, instruction->dst, instruction->src,
@@ -1233,7 +1163,7 @@ keyword_section:
 				break;
 			}
 			case SC_ASM_ADD_M32_M32:
-				x86_OP_M32_M32_EX(&x86, instruction, X86_ADD_RM32_R32, X86_CFG_ADD);
+				x86_OP_M32_M32_EX(&x86, instruction, 0x01, X86_CFG_ADD);
 				break;
 
 			case SC_ASM_SUB_M32_I32: {
@@ -1244,7 +1174,7 @@ keyword_section:
 				break;
 			}
 			case SC_ASM_SUB_M32_M32:
-				x86_OP_M32_M32_EX(&x86, instruction, X86_SUB_RM32_R32, X86_CFG_SUB);
+				x86_OP_M32_M32_EX(&x86, instruction, X86_SUB_RM8_R8 + 1, X86_CFG_SUB);
 				break;
 
 
@@ -1285,7 +1215,7 @@ keyword_section:
 
 				break;
 			}
-			default: si_printf("%i\n", instruction->type); SI_PANIC();
+			default: si_printf("INSTR: %i\n", instruction->type); SI_PANIC();
 		}
 	}
 

@@ -26,9 +26,9 @@ This section isn't meant to taken 100% seriously, there are a lot of other compo
     - [x] Function declarations
     - [ ] Function calls
 - [ ] unary operators:
-    - [ ] `+` nothing (NOTE: Works for constants only)
-    - [ ] `-` NEG (NOTE: Works for constants and most expressions, doesn't work if the expression is not binary)
-    - [ ] `~` bitwise complement (NOTE: Works for constants only)
+    - [x] `+` nothing
+    - [x] `-` NEG
+    - [x] `~` bitwise complement
     - [ ] `!` NOT (NOTE: Works for constants only)
     - [ ] `&` Address
     - [ ] `*` Dereference
