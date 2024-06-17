@@ -154,7 +154,7 @@ void sc_astHandleUnary(scAction* action, scTokenStruct* token, scAstNode* nextNo
 	nextNode->type = SC_AST_NODE_TYPE_UNARY_OP;
 	nextNode->data.unary.operator = token->token.operator;
 
-	b32 valid = false;
+	b32 valid = (nextToken->type != SILEX_TOKEN_OPERATOR);
 	while (nextToken && nextToken->type == SILEX_TOKEN_OPERATOR) {
 		if (nextToken->token.operator == SILEX_OPERATOR_PLUS) {
 			continue;

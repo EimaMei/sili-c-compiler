@@ -246,7 +246,8 @@ void sc_astNodeToAsm(scInfoTable* scope, scAsm* instructions, scOperator assignm
 
 			if (key != nil) {
 				SI_ASSERT(key->type == SC_IDENTIFIER_KEY_VAR);
-				asm.src = ((scVariable*)key->identifier)->location;
+				asm.src = asm.dst;
+				asm.dst = ((scVariable*)key->identifier)->location;
 			}
 			else {
 				asm.src = 0;
