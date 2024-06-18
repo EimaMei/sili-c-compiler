@@ -117,6 +117,9 @@ typedef struct scGlobalInfoTable {
 
 	usize funcsLen;
 	scFunction* funcs;
+
+	cstring fileName;
+	scString funcName;
 } scGlobalInfoTable;
 
 
@@ -134,7 +137,6 @@ typedef struct scInfoTable {
 	scVariable* types;
 } scInfoTable;
 SI_STATIC_ASSERT(sizeof(scInfoTable) == 56);
-SI_STATIC_ASSERT(sizeof(scGlobalInfoTable) == sizeof(scInfoTable) + sizeof(usize) * 2);
 
 typedef SI_ENUM(u32, scAsmType) {
 	SC_ASM_FUNC_START = 1,
@@ -314,8 +316,10 @@ extern scType type_double;
 #define SI_LOG_FMT(msg, ...) si_printf(msg, __VA_ARGS__)
 
 
-
+/* */
 scType* sc_typeGetFromKeyword(scKeyword keyword);
+
+void sc_tokenGet(scLexer* lex);
 
 /* */
 scType* sc_typeGet(scLexer* lex, scInfoTable* scope, scKeyword* outKeyword);

@@ -84,13 +84,13 @@ This section isn't meant to taken 100% seriously, there are a lot of other compo
     - [ ] BONUS, UNSTANDARD C FEATURES:
         - [ ] binary-constant (`0b` and `binary-constant digit(s)`, if any)
         - [ ] proper octal-constant (`0o` and `octal-constant digit(s)`, if any)
-- [ ] character constants:
-    - [ ] c-char (`'A'`...`'Z'`)
-    - [ ] escape sequences:
-        - [ ] simple (`\`, `\"`, `\?`, `\\`, `\a`, `\b`, `\f`, `\n`, `\r`, `\t`, `\v`)
-        - [ ] octal (`\NN`)
-        - [ ] hexadecimal (`\xNN`)
-    - [ ] long versions (`L'A'`, `L'\\'`, ...)
+- [x] character constants:
+    - [x] c-char (`'A'`...`'Z'`)
+    - [x] escape sequences:
+        - [x] simple (`\'`, `\"`, `\?`, `\\`, `\a`, `\b`, `\f`, `\n`, `\r`, `\t`, `\v`)
+        - [x] octal (`\NN`)
+        - [x] hexadecimal (`\xNN`)
+    - [x] long versions (`L'A'`, `L'\\'`, ...)
 - [ ] trigraph sequences (`??=`, `??(`, `??/`, `??)`, `??'`, `??<`, `??!`, `??>`, `??-`)
 - [ ] keywords:
     - [ ] auto
@@ -149,7 +149,7 @@ This section isn't meant to taken 100% seriously, there are a lot of other compo
 
 ## Environmental limits
 ### Translation limits
-**NOTE 1:** As of 2024-06-13, the compiler  isn't being tested for  translation 
+**NOTE 1:** As of 2024-06-13, the compiler  isn't being tested for  translation
 limits yet. This section is kept as a mere a reminder.
 **NOTE 2:** These limits are directly taken from section 5.2.4.1 of the C89
 standard draft.

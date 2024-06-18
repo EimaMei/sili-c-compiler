@@ -4948,10 +4948,10 @@ i32 si_charHexDigitToInt(char c) {
 	if (si_charIsDigit(c)) {
 		return si_charDigitToInt(c);
 	}
-	else if (c <= 'a' && c >= 'f') {
+	else if (c >= 'a' && c <= 'f') {
 		return c - 'a' + 10;
 	}
-	else if (c <= 'A' && c >= 'F') {
+	else if (c >= 'A' && c <= 'F') {
 		return c - 'A' + 10;
 	}
 

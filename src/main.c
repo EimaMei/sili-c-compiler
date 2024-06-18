@@ -540,8 +540,8 @@ void sc_actionMakePlusPlus(scActionType actionType,  scLexer* lex, scIdentifierK
 	t->token.constant.value.integer = 1;
 	SI_ARRAY_HEADER(action.values)->len = 2;
 
-	b32 res = silex_lexerTokenGet(lex);
-	SI_ASSERT(res && lex->type == SILEX_TOKEN_PUNCTUATOR);
+	sc_tokenGet(lex);
+	SI_ASSERT(lex->type == SILEX_TOKEN_PUNCTUATOR);
 	si_arrayPush(&curFunc->code, action);
 
 	switch (lex->token.punctuator) {
@@ -590,7 +590,7 @@ int main(void) {
 #if 1
 	SC_ALLOCATOR_MAKE(
 		SC_MAIN,
-		SI_MEGA(1),
+		SI_MEGA(2),
 		(3 * sizeof(siArrayHeader) + sizeof(siHashEntry) * SC_MAX_VARS) +
 
 		sizeof(scIdentifierKey) * (SC_MAX_VARS + SC_MAX_TYPES + SC_MAX_TYPES + SC_MAX_MACROS) +
@@ -644,6 +644,9 @@ int main(void) {
 		sizeof(scFunction) * SC_MAX_FUNCS
 	);
 
+	global_scope.fileName = "res/simple.c";
+	global_scope.funcName.text = nil;
+
 	scInfoTable* scope = (scInfoTable*)&global_scope;
 	scFunction* curFunc = nil;
 
@@ -681,7 +684,7 @@ int main(void) {
 	siTimeStamp ts = si_timeStampStart();
 	scLexer lex = silex_lexerMake(text, textLen);
 	scType* baseType;
-	b32 res, commaMode = false;
+	b32 commaMode = false;
 	scKeyword keyword;
 	scAction action;
 
@@ -703,8 +706,7 @@ int main(void) {
 						goto type_section;
 					}
 					case SC_IDENTIFIER_KEY_VAR: {
-						res = silex_lexerTokenGet(&lex);
-						SI_ASSERT(res);
+						sc_tokenGet(&lex);
 
 						switch (lex.type) {
 							case SILEX_TOKEN_OPERATOR: {
@@ -766,10 +768,10 @@ type_section:
 				scType type = sc_typeMake(&lex, baseType, keyword);
 type_section_start:
 				SI_ASSERT(lex.type == SILEX_TOKEN_IDENTIFIER);
-				u64 name = lex.token.identifier.hash;
+				scString name = lex.token.identifier;
 
-				res = silex_lexerTokenGet(&lex);
-				SI_ASSERT(res && lex.type == SILEX_TOKEN_PUNCTUATOR);
+				sc_tokenGet(&lex);
+				SI_ASSERT(lex.type == SILEX_TOKEN_PUNCTUATOR);
 
 				switch (lex.token.punctuator) {
 					case '(': {
@@ -781,7 +783,7 @@ type_section_start:
 						u32 params[128];
 						usize paramsLen = 0;
 
-						b32 res, funcIsNew;
+						b32 funcIsNew;
 						/* TODO(EimaMei): Atpažinti K&R apibrėžtis ir nepa-
 						 * vadintas deklaracijas. */
 						siHashEntry* entry;
@@ -791,7 +793,7 @@ type_section_start:
 						funcScope->parent = scope;
 						funcScope->rank = 1;
 
-						entry = si_hashtableSetWithHash(global_scope.identifiers, name, nil, &funcIsNew);
+						entry = si_hashtableSetWithHash(global_scope.identifiers, name.hash, nil, &funcIsNew);
 						if (funcIsNew) {
 							scIdentifierKey* key = si_malloc(alloc[SC_MAIN], sizeof(scIdentifierKey) + sizeof(scFunction));
 							key->type = SC_IDENTIFIER_KEY_FUNC;
@@ -799,7 +801,7 @@ type_section_start:
 
 							func = (scFunction*)key->identifier;
 							func->type = type;
-							func->name = name;
+							func->name = name.hash;
 							func->code = si_arrayMakeReserve(alloc[SC_MAIN], sizeof(scAction), 0);
 
 							entry->value = key;
@@ -812,10 +814,10 @@ type_section_start:
 						}
 
 						paramLoop: {
-							res = silex_lexerTokenGet(&lex);
+							sc_tokenGet(&lex);
 
 							scType type = sc_typeGetAndMake(&lex, funcScope);
-							SI_ASSERT(res && lex.type == SILEX_TOKEN_IDENTIFIER);
+							SI_ASSERT(lex.type == SILEX_TOKEN_IDENTIFIER);
 							u64 hash = lex.token.identifier.hash;
 
 							if (!funcIsNew) {
@@ -830,6 +832,7 @@ type_section_start:
 								scVariable* pVar = (scVariable*)key->identifier;
 								pVar->type = type;
 
+								b32 res;
 								siHashEntry* param = si_hashtableSetWithHash(funcScope->identifiers, hash, key, &res);
 								SI_ASSERT(res);
 
@@ -838,8 +841,7 @@ type_section_start:
 							}
 
 							do {
-								res = silex_lexerTokenGet(&lex);
-								SI_ASSERT(res);
+								sc_tokenGet(&lex);
 							} while (lex.type != SILEX_TOKEN_PUNCTUATOR);
 							scPunctuator punc = lex.token.punctuator;
 
@@ -850,8 +852,8 @@ type_section_start:
 							}
 						}
 
-						res = silex_lexerTokenGet(&lex);
-						SI_ASSERT(res && lex.type == SILEX_TOKEN_PUNCTUATOR);
+						sc_tokenGet(&lex);
+						SI_ASSERT(lex.type == SILEX_TOKEN_PUNCTUATOR);
 
 						if (funcIsNew) {
 							func->paramLen = paramsLen;
@@ -862,6 +864,7 @@ type_section_start:
 						switch (lex.token.punctuator) {
 							case '{': {
 								curFunc = func;
+								global_scope.funcName = name;
 								scope = funcScope;
 
 								for_range (i, 0, paramsLen * funcIsNew) {
@@ -889,7 +892,7 @@ type_section_start:
 							default: SI_PANIC_MSG("Cannot use this punctuator after a function declaration");
 						}
 
-						if (name == hash_main) {
+						if (name.hash == hash_main) {
 							sc_functionValidateMain(func);
 							global_scope.mainFuncID = func - global_scope.funcs;
 							hash_main = 0;
@@ -898,7 +901,7 @@ type_section_start:
 					}
 
 					case '=': {
-						scIdentifierKey* key = sc_identifierKeyGet(scope, name, SC_IDENTIFIER_KEY_VAR);
+						scIdentifierKey* key = sc_identifierKeyGet(scope, name.hash, SC_IDENTIFIER_KEY_VAR);
 						scVariable* pVar = (scVariable*)key->identifier;
 						pVar->type = type;
 
@@ -920,7 +923,7 @@ type_section_start:
 									type = *type.ptr;
 								}
 								commaMode = true;
-								res = silex_lexerTokenGet(&lex);
+								sc_tokenGet(&lex);
 								goto type_section_start;
 							case ';': break;
 							default: SI_PANIC_MSG("Expression should end with a semicolin or continued via a comma punctuator.");
@@ -950,8 +953,7 @@ keyword_section:
 					case SILEX_KEYWORD_TYPEDEF: {
 						scType type;
 						u64 name;
-						res = silex_lexerTokenGet(&lex);
-						SI_ASSERT(res);
+						sc_tokenGet(&lex);
 
 						type = sc_typeGetAndMake(&lex, scope);
 						SI_ASSERT(type.size != -2);
@@ -962,8 +964,8 @@ keyword_section:
 						scType* typedefType = (scType*)key->identifier;
 						*typedefType = type;
 
-						res = silex_lexerTokenGet(&lex);
-						SI_ASSERT(res && lex.type == SILEX_TOKEN_PUNCTUATOR && lex.token.punctuator == ';');
+						sc_tokenGet(&lex);
+						SI_ASSERT(lex.type == SILEX_TOKEN_PUNCTUATOR && lex.token.punctuator == ';');
 
 						break;
 					}
@@ -995,6 +997,7 @@ keyword_section:
 						if (scope->parent == nil) {
 							sc_parseFunction(oldScope, curFunc, asm);
 							curFunc = nil;
+							global_scope.funcName.text = nil;
 							break;
 						}
 
@@ -1011,8 +1014,8 @@ keyword_section:
 			case SILEX_TOKEN_OPERATOR: {
 				switch (lex.token.operator) {
 					case SILEX_OPERATOR_PLUS_PLUS: {
-						res = silex_lexerTokenGet(&lex);
-						SI_ASSERT_MSG(res && lex.type == SILEX_TOKEN_IDENTIFIER, "Expected an identifier");
+						sc_tokenGet(&lex);
+						SI_ASSERT_MSG(lex.type == SILEX_TOKEN_IDENTIFIER, "Expected an identifier");
 
 						scString identifier = lex.token.identifier;
 						scIdentifierKey* key = si_hashtableGetWithHash(scope->identifiers, identifier.hash);
@@ -1030,8 +1033,8 @@ keyword_section:
 						break;
 					}
 					case SILEX_OPERATOR_MINUS_MINUS: {
-						res = silex_lexerTokenGet(&lex);
-						SI_ASSERT_MSG(res && lex.type == SILEX_TOKEN_IDENTIFIER, "Expected an identifier");
+						sc_tokenGet(&lex);
+						SI_ASSERT_MSG(lex.type == SILEX_TOKEN_IDENTIFIER, "Expected an identifier");
 
 						scString identifier = lex.token.identifier;
 						scIdentifierKey* key = si_hashtableGetWithHash(scope->identifiers, identifier.hash);

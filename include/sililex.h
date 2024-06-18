@@ -34,6 +34,8 @@ MACROS
 
 	- SILEX_HASH_FUNC_END - TODO
 
+	- SILEX_NO_TEXT - TODO
+
 	- SILEX_NO_LEN - TODO
 
 
@@ -87,11 +89,18 @@ typedef SI_ENUM(i32, scTokenType) {
 	SILEX_TOKEN_INVALID,
 };
 
-typedef SI_ENUM(i32, scTokenError) {
-	SILEX_ERROR_NONE,
-	SILEX_ERROR_SUFFIX_LONG,
-	SILEX_ERROR_SUFFIX_UNSIGNED,
-	SILEX_ERROR_PREFIX_MINUS,
+typedef SI_ENUM(i32, scTokenState) {
+	SILEX_STATE_NORMAL,
+	SILEX_STATE_WARNING,
+	SILEX_STATE_ERROR
+};
+
+typedef SI_ENUM(i32, scErrorType) {
+	SILEX_ERROR_SUFFIX,
+	SILEX_ERROR_END,
+
+	SILEX_WARNING_UNKNOWN_ESC_SEQUENCE,
+	SILEX_WARNING_MULTICHAR,
 };
 
 typedef SI_ENUM(i32, scKeyword) {
@@ -179,13 +188,16 @@ typedef SI_ENUM(i32, scOperator) {
 
 
 typedef struct {
-#if !defined(SILEX_USE_HASH)
+#if !defined(SILEX_NO_TEXT)
 	cstring text;
-#else
-	scHashType hash;
 #endif
+
 #if !defined(SILEX_NO_LEN)
 	usize len;
+#endif
+
+#if defined(SILEX_USE_HASH)
+	scHashType hash;
 #endif
 } scString;
 
@@ -197,7 +209,7 @@ typedef union {
 	scOperator operator;
 } scToken;
 
-typedef SI_ENUM(u32, __scTokenState) {
+typedef SI_ENUM(u32, __scTokenNumberBits) {
 	SC__STATE_UNSIGNED = SI_BIT(0),
 	SC__STATE_LONG = SI_BIT(1),
 	SC__STATE_NUM_EXISTS = SI_BIT(2)
@@ -206,13 +218,23 @@ typedef SI_ENUM(u32, __scTokenState) {
 typedef struct {
 	cstring curData;
 	cstring end;
+	cstring lineStart;
 
 	scTokenType type;
 	scToken token;
+	scTokenState state;
 
-	scTokenError error;
+	i32 line;
+	i32 column;
+
+	struct {
+		scErrorType type;
+		cstring data;
+		usize len;
+	} error;
+
 	u32 base;
-	__scTokenState __state;
+	__scTokenNumberBits __num;
 } scLexer;
 
 typedef struct {
@@ -272,19 +294,41 @@ siIntern
 scKeyword silex__tokenIdToKeyword(u64 num);
 
 siIntern
-b32 silex__tokenizeConsantInt(scLexer* lexer, const char* pLetter, isize* unaryBitLen,
+b32 silex__tokenizeConstantInt(scLexer* lexer, const char* pLetter, isize* unaryBitLen,
 		u64* unary);
 
-
+siIntern
+b32 silex__tokenizeConstantChar(scLexer* lexer, const char* pLetter, isize* pUnaryBitLen,
+		u64* unary);
 
 scLexer silex_lexerMake(cstring content, usize len) {
 	scLexer lexer = {0};
 	lexer.curData = content;
+	lexer.lineStart = content;
 	lexer.end = content + len;
 	lexer.base = 10;
+	lexer.line = 1;
 
 	return lexer;
 }
+
+siIntern
+void silex__errorSet(scLexer* lexer, scErrorType type, const char* pLetter, usize len) {
+	lexer->type = SILEX_TOKEN_INVALID;
+	lexer->state = SILEX_STATE_ERROR;
+	lexer->error.type = type;
+	lexer->error.data = pLetter;
+	lexer->error.len = len;
+}
+
+siIntern
+void silex__warningSet(scLexer* lexer, scErrorType type, const char* pLetter, usize len) {
+	lexer->state = SILEX_STATE_WARNING;
+	lexer->error.type = type;
+	lexer->error.data = pLetter;
+	lexer->error.len = len;
+}
+
 
 
 b32 silex_lexerTokenGet(scLexer* lexer) {
@@ -299,8 +343,29 @@ b32 silex_lexerTokenGet(scLexer* lexer) {
 	u64 unary[(SILEX_UNARY_CHAR_LIMIT) / (sizeof(u64) * 8 / 2)];
 	memset(unary, 0, sizeof(unary));
 
+#define SKIP_WHITESPACE(lexer, pLetter) \
+	do { \
+		switch (*pLetter) { \
+			case ' ': case '\t': case '\f': \
+				pLetter += 1; \
+				continue; \
+			case '\n': \
+				lexer->line += 1; \
+				lexer->lineStart = pLetter; \
+				pLetter += 1; \
+				continue; \
+			case '\r': \
+				lexer->line += 1; \
+				pLetter += 1; \
+				SI_STOPIF(*pLetter == '\n', pLetter += 1); \
+				lexer->lineStart = pLetter; \
+				continue; \
+		} \
+		break; \
+	} while (true)
+
 start:
-	while (si_charIsSpace(*pLetter)) { pLetter += 1; }
+	SKIP_WHITESPACE(lexer, pLetter);
 	SI_STOPIF(pLetter >= lexer->end, lexer->type = SILEX_TOKEN_EOF; return false);
 
 	if (SI_TO_U16(pLetter) == SI_TO_U16("/*")) {
@@ -308,6 +373,7 @@ start:
 back:
 		while (*pLetter != '*') {
 			pLetter += 1;
+			if (*pLetter == '\n') { lexer->line += 1; }
 		}
 		pLetter += 1;
 		SI_STOPIF(*pLetter != '/', pLetter += 1; goto back);
@@ -333,8 +399,10 @@ back:
 					pLetter += 1;
 				}
 				lexer->curData = pLetter;
-				usize len = pLetter - start;
+				lexer->column = pLetter - lexer->lineStart;
+				lexer->state = SILEX_STATE_NORMAL;
 
+				usize len = pLetter - start;
 				if (len <= 8) {
 					u64 stringInt = 0;
 					memcpy(&stringInt, start, len);
@@ -347,18 +415,18 @@ back:
 					}
 				}
 
-				lexer->__state = SC__STATE_NUM_EXISTS;
-				unaryBitLen = -1;
-
 				lexer->type = SILEX_TOKEN_IDENTIFIER;
+#ifndef SILEX_NO_TEXT
+				lexer->token.identifier.text = start;
+#endif
 #ifndef SILEX_NO_LEN
 				lexer->token.identifier.len = len;
 #endif
-#ifndef SILEX_USE_HASH
-				lexer->token.identifier.text = start;
-#else
+#ifdef SILEX_USE_HASH
 				lexer->token.identifier.hash = hash;
 #endif
+				lexer->__num = SC__STATE_NUM_EXISTS;
+				unaryBitLen = -1;
 
 				return true;
 			}
@@ -367,8 +435,9 @@ back:
 
 		case '!': {
 			pLetter += 1;
-			while (si_charIsSpace(*pLetter)) { pLetter += 1; }
-			if ((lexer->__state & SC__STATE_NUM_EXISTS) == 0) {
+			SKIP_WHITESPACE(lexer, pLetter);
+
+			if ((lexer->__num & SC__STATE_NUM_EXISTS) == 0) {
 				if (unaryBitLen == -1) {
 					const char* check = pLetter;
 					while (!si_charIsAlphanumeric(*check)) { check += 1; }
@@ -380,8 +449,11 @@ back:
 					goto start;
 				}
 			}
-			lexer->__state = 0;
 			lexer->curData = pLetter;
+			lexer->column = pLetter - lexer->lineStart;
+			lexer->state = SILEX_STATE_NORMAL;
+			lexer->__num = 0;
+
 			lexer->type = SILEX_TOKEN_OPERATOR;
 			lexer->token.operator = SILEX_OPERATOR_EXCLAMATION_MARK;
 			return true;
@@ -390,8 +462,9 @@ back:
 
 		case '~': {
 			pLetter += 1;
-			while (si_charIsSpace(*pLetter)) { pLetter += 1; }
-			if ((lexer->__state & SC__STATE_NUM_EXISTS) == 0) {
+			SKIP_WHITESPACE(lexer, pLetter);
+
+			if ((lexer->__num & SC__STATE_NUM_EXISTS) == 0) {
 				if (unaryBitLen == -1) {
 					const char* check = pLetter;
 					while (!si_charIsAlphanumeric(*check)) { check += 1; }
@@ -403,11 +476,13 @@ back:
 					goto start;
 				}
 			}
-
-			lexer->__state = 0;
 			lexer->curData = pLetter;
 			lexer->type = SILEX_TOKEN_OPERATOR;
 			lexer->token.operator = SILEX_OPERATOR_TILDE;
+
+			lexer->column = pLetter - lexer->lineStart;
+			lexer->state = SILEX_STATE_NORMAL;
+			lexer->__num = 0;
 			return true;
 		}
 
@@ -419,18 +494,24 @@ back:
 				lexer->curData = pLetter + 1;
 				lexer->type = SILEX_TOKEN_OPERATOR;
 				lexer->token.operator = SILEX_OPERATOR_PLUS_PLUS + (*ogChar == '-');
+
+				lexer->column = pLetter - lexer->lineStart;
+				lexer->state = SILEX_STATE_NORMAL;
 				return true;
 			}
 			else if (*pLetter == '=') {
 				lexer->curData = pLetter + 1;
 				lexer->type = SILEX_TOKEN_OPERATOR;
 				lexer->token.operator = SILEX_OPERATOR_PLUS_ASSIGN + (*ogChar == '-');
+
+				lexer->column = pLetter - lexer->lineStart;
+				lexer->state = SILEX_STATE_NORMAL;
 				return true;
 			}
-			while (si_charIsSpace(*pLetter)) { pLetter += 1; }
+			SKIP_WHITESPACE(lexer, pLetter);
 
 			b32 isNeg = (*ogChar == '-');
-			if ((lexer->__state & SC__STATE_NUM_EXISTS) == 0) {
+			if ((lexer->__num & SC__STATE_NUM_EXISTS) == 0) {
 				if (unaryBitLen == -1) {
 					const char* check = pLetter;
 					while (!si_charIsAlphanumeric(*check)) { check += 1; }
@@ -445,18 +526,36 @@ back:
 				}
 			}
 
-			lexer->__state = 0;
 			lexer->curData = pLetter;
 			lexer->type = SILEX_TOKEN_OPERATOR;
 			lexer->token.operator = SILEX_OPERATOR_PLUS + isNeg;
+
+			lexer->column = pLetter - lexer->lineStart;
+			lexer->state = SILEX_STATE_NORMAL;
+			lexer->__num = 0;
+
 			return true;
 		}
 
 
 		case '0': case '1': case '2': case '3': case '4': case '5': case '6': case '7':
 		case '8': case '9': {
-			return silex__tokenizeConsantInt(lexer, pLetter, &unaryBitLen, unary);
+			return silex__tokenizeConstantInt(lexer, pLetter, &unaryBitLen, unary);
 		}
+
+		case 'L': {
+			if (pLetter[1] == '\'') {
+				pLetter += 1;
+				siFallthrough;
+			}
+			else {
+				SI_PANIC();
+			}
+		}
+		case '\'': {
+			return silex__tokenizeConstantChar(lexer, pLetter, &unaryBitLen, unary);
+		}
+
 
 		/* TODO(EimaMei): Reikia apdoroti atvejį, kai žvaigždutės simbolis
 		yra naudojamas kaip daugybos, o ne skyrybos ženklu. */
@@ -468,18 +567,26 @@ back:
 				SI_ASSERT(valid);
 			}
 
-			lexer->__state = 0;
 			lexer->type = SILEX_TOKEN_PUNCTUATOR;
 			lexer->token.punctuator = '*';
+
+			lexer->column = pLetter - lexer->lineStart;
+			lexer->state = SILEX_STATE_NORMAL;
+			lexer->__num = 0;
+
 			return true;
 
 		case '(': case ')': case '[': case ']': case '{': case '}': case ';': case '=':
 		case ',':
 			lexer->curData = pLetter + 1;
 
-			lexer->__state = 0;
 			lexer->type = SILEX_TOKEN_PUNCTUATOR;
 			lexer->token.punctuator = *pLetter;
+
+			lexer->column = pLetter - lexer->lineStart;
+			lexer->state = SILEX_STATE_NORMAL;
+			lexer->__num = 0;
+
 			return true;
 	}
 	SI_PANIC();
@@ -488,66 +595,7 @@ back:
 }
 
 static
-b32 silex__tokenizeConsantInt(scLexer* lexer, const char* pLetter, isize* pUnaryBitLen,
-		u64* unary) {
-	u64 value = 0;
-	b32 running = true;
-	u32 base = lexer->base;
-
-	while (running) {
-		char x = si_charLower(*pLetter);
-
-		i32 digit = (x - '0');
-		if (si_between(digit, 0, base - 1)) {
-			value *= base;
-			value += digit;
-			pLetter += 1;
-			continue;
-		}
-
-		b32 hasSpace = si_charIsSpace(*pLetter);
-		if (hasSpace) {
-			pLetter += 1;
-			while (si_charIsSpace(*pLetter)) { pLetter += 1; }
-			x = *pLetter;
-		}
-
-		switch (x) {
-			case 'l': {
-				if (!hasSpace && (lexer->__state & SC__STATE_LONG) == 0) {
-					lexer->__state |= SC__STATE_LONG;
-					pLetter += 1;
-					continue;
-				}
-
-				lexer->curData = pLetter;
-				lexer->type = SILEX_TOKEN_INVALID;
-				lexer->error = SILEX_ERROR_SUFFIX_LONG;
-				return false;
-			}
-			case 'u': {
-				if (!hasSpace && (lexer->__state & SC__STATE_UNSIGNED) == 0) {
-					lexer->__state |= SC__STATE_UNSIGNED;
-					pLetter += 1;
-					continue;
-				}
-
-				lexer->curData = pLetter;
-				lexer->type = SILEX_TOKEN_INVALID;
-				lexer->error = SILEX_ERROR_SUFFIX_UNSIGNED;
-				return false;
-			}
-			default: {
-				running = false;
-				break;
-			}
-		}
-	}
-	lexer->curData = pLetter;
-	lexer->type = SILEX_TOKEN_CONSTANT;
-
-	scConstant* constant = &lexer->token.constant;
-
+void silex__tokenizeUnary(u64 value, isize* pUnaryBitLen, u64* unary) {
 	isize unaryBitLen = *pUnaryBitLen;
 	isize i = unaryBitLen;
 
@@ -573,17 +621,192 @@ b32 silex__tokenizeConsantInt(scLexer* lexer, const char* pLetter, isize* pUnary
 		i -= 32;
 	}
 	*pUnaryBitLen = -1;
+}
 
+static
+b32 silex__tokenizeConstantInt(scLexer* lexer, const char* pLetter, isize* pUnaryBitLen,
+		u64* unary) {
+	u64 value = 0;
+	b32 running = true;
+	u32 base = lexer->base;
+
+	cstring suffixStart = nil;
+	b32 suffixInvalid = false;
+
+	while (running) {
+		char x = si_charUpper(*pLetter);
+
+		i32 digit = (x - '0');
+		if (si_between(digit, 0, base - 1)) {
+			value *= base;
+			value += digit;
+			pLetter += 1;
+			continue;
+		}
+		else if (suffixStart == nil) {
+			suffixStart = pLetter;
+		}
+
+		switch (x) {
+			case 'l': {
+				if ((lexer->__num & SC__STATE_LONG) == 0) {
+					lexer->__num |= SC__STATE_LONG;
+					pLetter += 1;
+					continue;
+				}
+				pLetter += 1;
+				suffixInvalid = true;
+				running = false;
+				break;
+			}
+			case 'u': {
+				if ((lexer->__num & SC__STATE_UNSIGNED) == 0) {
+					lexer->__num |= SC__STATE_UNSIGNED;
+					pLetter += 1;
+					continue;
+				}
+				pLetter += 1;
+				suffixInvalid = true;
+				running = false;
+				break;
+			}
+			default: {
+				suffixInvalid = si_charIsAlpha(x);
+				while (si_charIsAlpha(*pLetter)) { pLetter += 1; }
+				running = false;
+			}
+		}
+	}
+
+	lexer->curData = pLetter;
+	lexer->type = SILEX_TOKEN_CONSTANT;
+	lexer->state = SILEX_STATE_NORMAL;
+
+	silex__tokenizeUnary(value, pUnaryBitLen, unary);
+
+	scConstant* constant = &lexer->token.constant;
 	constant->value.integer = value;
-	constant->type = (lexer->__state & SC__STATE_UNSIGNED)
+	constant->type = (lexer->__num & SC__STATE_UNSIGNED)
 		? SILEX_CONSTANT_NUM_UNSIGNED
 		: SILEX_CONSTANT_NUM_SIGNED;
 
-	lexer->__state = SC__STATE_NUM_EXISTS;
 	lexer->base = 10;
+	lexer->column = pLetter - lexer->lineStart;
+	lexer->__num = SC__STATE_NUM_EXISTS;
+
+	if (suffixInvalid) {
+		silex__errorSet(lexer, SILEX_ERROR_SUFFIX, suffixStart, pLetter - suffixStart);
+		return false;
+	}
 
 	return true;
 }
+
+static
+b32 silex__tokenizeConstantChar(scLexer* lexer, const char* pLetter, isize* pUnaryBitLen,
+		u64* unary) {
+	u64 value = 0;
+	b16 invalid = false;
+	b16 unknown = false;
+	b32 running = true;
+	cstring start = pLetter;
+
+	pLetter += 1;
+	while (running) {
+		char x = *pLetter;
+
+		switch (x) {
+			case '\'': running = false; break;
+			case '\\': {
+				value <<= 8;
+				switch (pLetter[1]) {
+					case '\'': value |= '\''; break;
+					case '"': value |= '\"'; break;
+					case '?': value |= '\?'; break;
+					case '\\': value |= '\\'; break;
+					case 'a': value |= '\a'; break;
+					case 'b': value |= '\b'; break;
+					case 'f': value |= '\f'; break;
+					case 'n': value |= '\n'; break;
+					case 'r': value |= '\r'; break;
+					case 't': value |= '\t'; break;
+					case 'v': value |= '\v'; break;
+
+					case '0': case '1': case '2': case '3': case '4': case 5: case 6: case '7':
+						value |= pLetter[1] - '0';
+						if (si_between(pLetter[2], '0', '7')) {
+							value *= 8;
+							value |= pLetter[2] - '0';
+							pLetter += 1;
+						}
+						break;
+
+					case 'x': {
+						i32 x = si_charHexDigitToInt(pLetter[2]);
+						if (x != -1) {
+							value |= x;
+							x = si_charHexDigitToInt(pLetter[3]);
+							if (x != -1) {
+								value *= 16;
+								value |= x;
+								pLetter += 2;
+								break;
+							}
+							pLetter += 1;
+
+							break;
+						}
+						invalid = true;
+						break;
+					}
+
+					default: {
+						value |= pLetter[1];
+						unknown = true;
+					}
+				}
+				pLetter += 2;
+
+				continue;
+			}
+			default: {
+				value <<= 8;
+				value |= x;
+			}
+		}
+
+		pLetter += 1;
+	}
+
+	lexer->curData = pLetter;
+	lexer->type = SILEX_TOKEN_CONSTANT;
+	lexer->state = SILEX_STATE_NORMAL;
+
+	silex__tokenizeUnary(value, pUnaryBitLen, unary);
+
+	scConstant* constant = &lexer->token.constant;
+	constant->value.integer = value;
+	constant->type = SILEX_CONSTANT_NUM_SIGNED;
+
+	lexer->base = 10;
+	lexer->column = pLetter - lexer->lineStart;
+	lexer->__num = SC__STATE_NUM_EXISTS;
+
+	if (unknown) {
+		silex__warningSet(
+			lexer, SILEX_WARNING_UNKNOWN_ESC_SEQUENCE, start, pLetter - 1 - start
+		);
+
+	}
+	else if (value > 0xFF) {
+		silex__warningSet(
+			lexer, SILEX_WARNING_MULTICHAR, start, pLetter - 1 - start
+		);
+	}
+
+	return true;
+}
+
 
 
 siIntern

@@ -4,6 +4,63 @@
 #include <sililex.h>
 #endif
 
+
+void sc_tokenGet(scLexer* lex) {
+	silex_lexerTokenGet(lex);
+
+	SI_STOPIF(lex->state == SILEX_STATE_NORMAL, return);
+	if (lex->type == SILEX_TOKEN_EOF) {
+		SI_PANIC();
+	}
+
+	usize len = 0;
+	char buf[SI_KILO(4)];
+
+	if (global_scope.funcName.text != nil) {
+		len += si_snprintf(
+			buf, sizeof(buf), "%s: In function '%*s':\n",
+			global_scope.fileName, global_scope.funcName.len, global_scope.funcName.text
+		) - 1;
+	}
+	b32 isError = (lex->error.type < SILEX_ERROR_END);
+
+	len += si_snprintf(
+		&buf[len], sizeof(buf) - len, "%s:%i:%i: %s: ",
+		global_scope.fileName, lex->line, lex->column, isError ? "error" : "warning"
+	) - 1;
+
+	switch (lex->error.type) {
+		case SILEX_ERROR_SUFFIX:
+			len += si_snprintf(
+				&buf[len], sizeof(buf) - len, "Invalid suffix \"%*s\" on an integer constant",
+				lex->error.len, lex->error.data
+			) - 1;
+			break;
+		case SILEX_WARNING_UNKNOWN_ESC_SEQUENCE:
+			len += si_snprintf(
+				&buf[len], sizeof(buf) - len,
+				"Unknown escape sequence (Undefined behaviour)"
+			) - 1;
+			break;
+
+		case SILEX_WARNING_MULTICHAR:
+			len += si_snprintf(
+				&buf[len], sizeof(buf) - len,
+				"Multi-character character constant (Implementation-defined)"
+			) - 1;
+			break;
+
+	}
+
+	buf[len + 0] = '.';
+	buf[len + 1] = '\n';
+
+	si_fprint(SI_STDERR, buf);
+	if (isError) {
+		exit(1);
+	}
+}
+
 scType* sc_typeGetFromKeyword(scKeyword keyword) {
 	static scType* types[] = {
 		&type_char, &type_short, &type_int, &type_long,
@@ -49,8 +106,7 @@ scType sc_typeMake(scLexer* lex, scType* baseType, scKeyword keyword) {
 
 	scType type = *baseType;
 retry:
-	res = silex_lexerTokenGet(lex);
-	SI_ASSERT(res);
+	sc_tokenGet(lex);
 
 	switch (lex->type) {
 		case SILEX_TOKEN_PUNCTUATOR: {
@@ -128,10 +184,10 @@ void sc_constantArithmetic(scConstant* constant, scOperator operator, scConstant
 
 scPunctuator sc_actionAddValues(scLexer* lex, scAction* action) {
 	scTokenStruct token;
-	b32 res;
 retry:
-	res = silex_lexerTokenGet(lex);
-	SI_ASSERT(res);
+	si_printf("%p %i %i\n", lex->curData, lex->type, lex->token.keyword);
+	sc_tokenGet(lex);
+	si_printf("%p %i %i\n", lex->curData, lex->type, lex->token.keyword);
 
 	switch (lex->type) {
 		case SILEX_TOKEN_PUNCTUATOR: {
@@ -240,7 +296,7 @@ void sc_astNodeMake(siArray(scAction) action, b32 firstIsIdentifier) {
 				node->data.binary.right = nextNode;
 				break;
 			}
-			default: SI_PANIC();
+			default: si_printf("%i %i\n", token->type, token->token.keyword); SI_PANIC();
 		}
 
 		prevNode = node;
