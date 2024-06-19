@@ -16,8 +16,9 @@ i32 func(i32 x);
 
 
 i32 main(i32 argc, cstring* argv) {
-	int x = '\xFF' - 55 + L'0' - '\n' - argc;
-	return x + argc;
+	int x = 50 - ((25 + ~argc) + 6 - 34);
+	/* int y = '\xFF' - 55 + L'0' - '\n' - argc; */
+	return x;
 }
 
 

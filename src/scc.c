@@ -115,7 +115,7 @@ retry:
 
 			if (!hasSetPtr) {
 				type.ptr = baseType;
-				type.size = sizeof_SIZE_T;
+				type.size = type_size_t.size;
 				hasSetPtr = true;
 			}
 			type.ptrCount += 1;
@@ -182,22 +182,48 @@ void sc_constantArithmetic(scConstant* constant, scOperator operator, scConstant
 	}
 }
 
-scPunctuator sc_actionAddValues(scLexer* lex, scAction* action) {
+scPunctuator sc_actionAddValues(scLexer* lex, scInfoTable* scope, scAction* action) {
 	scTokenStruct token;
 retry:
-	si_printf("%p %i %i\n", lex->curData, lex->type, lex->token.keyword);
 	sc_tokenGet(lex);
-	si_printf("%p %i %i\n", lex->curData, lex->type, lex->token.keyword);
 
 	switch (lex->type) {
 		case SILEX_TOKEN_PUNCTUATOR: {
 			scPunctuator punctuator = lex->token.punctuator;
-			SI_STOPIF(punctuator == '(' || punctuator == ')', goto retry);
-			SI_ASSERT(punctuator == ';' || punctuator == ',');
 
+			if (punctuator == '(' || punctuator == ')') {
+				goto push;
+			}
+
+			SI_ASSERT(punctuator == ';' || punctuator == ',');
 			return punctuator;
 		}
+
+		case SILEX_TOKEN_KEYWORD: {
+			if (lex->token.keyword == SILEX_KEYWORD_SIZEOF) {
+				sc_tokenGet(lex);
+
+				if (lex->type == SILEX_TOKEN_PUNCTUATOR) {
+					SI_PANIC();
+					SI_ASSERT(lex->token.punctuator == '(');
+					sc_tokenGet(lex);
+				}
+				else if (lex->type == SILEX_TOKEN_IDENTIFIER) {
+					i32 res;
+					scVariable* key = sc_variableGet(scope, lex->token.identifier.hash, &res);
+					SI_ASSERT(res == 0);
+
+					lex->type = SILEX_TOKEN_CONSTANT;
+					lex->token.constant.type = SILEX_CONSTANT_NUM_UNSIGNED;
+					lex->token.constant.value.integer = key->type.size;
+				}
+				else SI_PANIC();
+			}
+			siFallthrough;
+		}
+
 		default:
+push:
 			token = (scTokenStruct){lex->type, lex->token};
 			si_arrayPush(&action->values, token);
 			goto retry;
@@ -205,42 +231,157 @@ retry:
 
 }
 
-void sc_astHandleUnary(scAction* action, scTokenStruct* token, scAstNode* nextNode,
-		scTokenStruct* nextToken, usize* outI) {
-	nextNode->type = SC_AST_NODE_TYPE_UNARY_OP;
-	nextNode->data.unary.operator = token->token.operator;
+void sc_astHandleUnary(scAction* action, scTokenStruct* token, scAstNode* node,
+		usize* outI) {
+	SI_ASSERT(token->type == SILEX_TOKEN_OPERATOR);
 
-	b32 valid = (nextToken->type != SILEX_TOKEN_OPERATOR);
-	while (nextToken && nextToken->type == SILEX_TOKEN_OPERATOR) {
-		if (nextToken->token.operator == SILEX_OPERATOR_PLUS) {
-			continue;
-		}
-		valid = true;
+	node->type = SC_AST_NODE_TYPE_UNARY_OP;
+	node->data.unary.operator = token->token.operator;
+
+	*outI += 1;
+	token = si_arrayAt(action->values, *outI);
+	SI_ASSERT_NOT_NULL(token);
+
+	while (token->type == SILEX_TOKEN_OPERATOR) {
+		SI_STOPIF(token->token.operator == SILEX_OPERATOR_PLUS, continue);
 
 		scAstNode* init = si_mallocItem(alloc[SC_MAIN], scAstNode);
 		init->type = SC_AST_NODE_TYPE_UNARY_OP;
-		init->data.unary.operator = nextToken->token.operator;
+		init->data.unary.operator = token->token.operator;
 
-		nextNode->data.unary.operand = init;
-		nextNode = init;
+		node->data.unary.operand = init;
+		node = init;
 
 		*outI += 1;
-		nextToken = si_arrayAt(action->values, *outI);
+		scTokenStruct* pToken = si_arrayAt(action->values, *outI);
+		SI_STOPIF(pToken == nil, break);
+		token = pToken;
 	}
-	SI_ASSERT_NOT_NULL(nextToken);
+	SI_ASSERT(token->type == SILEX_TOKEN_IDENTIFIER);
 
-	if (valid) {
-		scAstNode* init = si_mallocItem(alloc[SC_MAIN], scAstNode);
-		init->type = SC_AST_NODE_TYPE_IDENTIFIER;
-		init->data.identifier = nextToken->token.identifier.hash;
+	scAstNode* init = si_mallocItem(alloc[SC_MAIN], scAstNode);
+	init->type = SC_AST_NODE_TYPE_IDENTIFIER;
+	init->data.identifier = token->token.identifier;
 
-		nextNode->data.unary.operand = init;
-	}
-	else {
-		nextNode->type = SC_AST_NODE_TYPE_IDENTIFIER;
-		nextNode->data.identifier = nextToken->token.identifier.hash;
-	}
+	node->data.unary.operand = init;
 }
+
+
+scAstNode* sc_astTokenToNode(scAction* action, scTokenStruct* token, b32 binaryOP,
+		scAstNode* prevNode, usize* outI) {
+	scAstNode* node	= si_mallocItem(alloc[SC_MAIN], scAstNode);
+
+	switch (token->type) {
+		case SILEX_TOKEN_CONSTANT: {
+			node = si_mallocItem(alloc[SC_MAIN], scAstNode);
+
+			node->type = SC_AST_NODE_TYPE_CONSTANT;
+			node->data.constant = token->token.constant;
+			break;
+		}
+		case SILEX_TOKEN_IDENTIFIER: {
+			node = si_mallocItem(alloc[SC_MAIN], scAstNode);
+
+			node->type = SC_AST_NODE_TYPE_IDENTIFIER;
+			node->data.identifier = token->token.identifier;
+			break;
+		}
+		case SILEX_TOKEN_OPERATOR: {
+			node = si_mallocItem(alloc[SC_MAIN], scAstNode);
+
+			if (prevNode == nil || binaryOP) {
+				sc_astHandleUnary(action, token, node, outI);
+				break;
+			}
+
+			*outI += 1;
+			scTokenStruct* nextToken = si_arrayAt(action->values, *outI);
+			SI_ASSERT_NOT_NULL(nextToken);
+			scAstNode* nextNode = sc_astTokenToNode(action, nextToken, true, prevNode, outI);
+
+			node->type = SC_AST_NODE_TYPE_BINARY_OP;
+			node->data.binary.left = prevNode;
+			node->data.binary.operator = token->token.operator;
+			node->data.binary.right = nextNode;
+
+			break;
+		}
+		case SILEX_TOKEN_PUNCTUATOR: {
+			if (token->token.punctuator != '(') {
+				SI_PANIC();
+			}
+			do {
+				*outI += 1;
+				token = si_arrayAt(action->values, *outI);
+				SI_ASSERT_NOT_NULL(token);
+				if (token->type == SILEX_TOKEN_PUNCTUATOR && token->token.punctuator == ')') break;
+				prevNode = sc_astTokenToNode(action, token, false, prevNode, outI);
+			} while (true);
+			node = prevNode;
+
+
+			break;
+		}
+		default: SI_LOG_FMT("%i %i\n", token->type, token->token.keyword); SI_PANIC();
+	}
+
+	return node;
+}
+#if 0
+*outI += 1;
+token = si_arrayAt(action->values, *outI);
+SI_ASSERT_NOT_NULL(token);
+
+node->type = SC_AST_NODE_TYPE_BINARY_OP;
+node->data.binary.left = sc_astTokenToNode(action, token, binaryOP, prevNode, outI);
+
+*outI += 1;
+token = si_arrayAt(action->values, *outI);
+SI_ASSERT_NOT_NULL(token);
+SI_ASSERT(token->type == SILEX_TOKEN_OPERATOR);
+node->data.binary.operator = token->token.operator;
+
+*outI += 1;
+token = si_arrayAt(action->values, *outI);
+SI_ASSERT_NOT_NULL(token);
+node->data.binary.right = sc_astTokenToNode(action, token, binaryOP, node->data.binary.left, outI);
+
+*outI += 1;
+token = si_arrayAt(action->values, *outI);
+prevNode = node;
+// goto skip;
+while (token && !(token->type == SILEX_TOKEN_PUNCTUATOR && token->token.punctuator == ')')) {
+	prevNode = sc_astTokenToNode(action, token, false, prevNode, outI);
+
+	*outI += 1;
+	token = si_arrayAt(action->values, *outI);
+#if 0
+	node = si_mallocItem(alloc[SC_MAIN], scAstNode);
+skip:
+	node->type = SC_AST_NODE_TYPE_BINARY_OP;
+	node->data.binary.left = sc_astTokenToNode(action, token, binaryOP, prevNode, outI);
+
+	*outI += 1;
+	token = si_arrayAt(action->values, *outI);
+	SI_ASSERT_NOT_NULL(token);
+	SI_ASSERT(token->type == SILEX_TOKEN_OPERATOR);
+	node->data.binary.operator = token->token.operator;
+
+	*outI += 1;
+	token = si_arrayAt(action->values, *outI);
+	SI_ASSERT_NOT_NULL(token);
+	node->data.binary.right = sc_astTokenToNode(action, token, binaryOP, node->data.binary.left, outI);
+	prevNode = node;
+
+
+	*outI += 1;
+	token = si_arrayAt(action->values, *outI);
+	SI_ASSERT_NOT_NULL(token);
+#endif
+
+}
+SI_ASSERT_NOT_NULL(token);
+#endif
 
 void sc_astNodeMake(siArray(scAction) action, b32 firstIsIdentifier) {
 	SI_ASSERT_NOT_NULL(action);
@@ -248,141 +389,10 @@ void sc_astNodeMake(siArray(scAction) action, b32 firstIsIdentifier) {
 	scAstNode* prevNode = nil;
 	for_range (i, firstIsIdentifier, si_arrayLen(action->values)) {
 		scTokenStruct* token = &action->values[i];
-		scAstNode* node	= si_mallocItem(alloc[SC_MAIN], scAstNode);
-
-		switch (token->type) {
-			case SILEX_TOKEN_CONSTANT: {
-				node->type = SC_AST_NODE_TYPE_CONSTANT;
-				node->data.constant = token->token.constant;
-				break;
-			}
-			case SILEX_TOKEN_IDENTIFIER: {
-				node->type = SC_AST_NODE_TYPE_IDENTIFIER;
-				node->data.identifier = token->token.identifier.hash;
-				break;
-			}
-			case SILEX_TOKEN_OPERATOR: {
-				i += 1;
-				scTokenStruct* nextToken = si_arrayAt(action->values, i);
-				SI_ASSERT_NOT_NULL(nextToken);
-				scAstNode* nextNode = si_mallocItem(alloc[SC_MAIN], scAstNode);
-
-				if (prevNode == nil) {
-					sc_astHandleUnary(action, token, nextNode, nextToken, &i);
-					prevNode = nextNode;
-
-					continue;
-				}
-
-				switch (nextToken->type) {
-					case SILEX_TOKEN_CONSTANT:
-						nextNode->type = SC_AST_NODE_TYPE_CONSTANT;
-						nextNode->data.constant = nextToken->token.constant;
-						break;
-					case SILEX_TOKEN_IDENTIFIER:
-						nextNode->type = SC_AST_NODE_TYPE_IDENTIFIER;
-						nextNode->data.identifier = nextToken->token.identifier.hash;
-						break;
-					case SILEX_TOKEN_OPERATOR:
-						i += 1;
-						sc_astHandleUnary(action, nextToken, nextNode, si_arrayAt(action->values, i), &i);
-						break;
-
-					default: SI_PANIC();
-				}
-				node->type = SC_AST_NODE_TYPE_BINARY_OP;
-				node->data.binary.left = prevNode;
-				node->data.binary.operator = token->token.operator;
-				node->data.binary.right = nextNode;
-				break;
-			}
-			default: si_printf("%i %i\n", token->type, token->token.keyword); SI_PANIC();
-		}
-
-		prevNode = node;
+		prevNode = sc_astTokenToNode(action, token, false, prevNode, &i);
 	}
 
 	action->root = prevNode;
-
-#if 0
-		switch (token->type) {
-			case SILEX_TOKEN_OPERATOR: {
-				if (unaryState == false) {
-					init->operator = token->token.operator;
-					init->node.binary.left = prevInit;
-					unaryState = true;
-
-					if (prevInit->operator != 0) {
-						prevInit->parent = init;
-					}
-					break;
-				}
-
-				scInitializer* ogPrevInit = (prevInit->operator != 0)
-					? prevInit
-					: init;
-				scInitializer* start = init;
-
-				init->operator = token->token.operator;
-				prevInit = init;
-				i += 1;
-
-				while (true) {
-					token = &action->values[i];
-					SI_STOPIF(token->type != SILEX_TOKEN_OPERATOR, break);
-
-					init = si_mallocItem(alloc[SC_MAIN], scInitializer);
-					init->operator = token->token.operator;
-					init->parent = start;
-
-					prevInit->node.binary.left = init;
-					prevInit->node.binary.right = nil;
-
-					prevInit = init;
-					i += 1;
-				}
-
-				scInitializer* leftInit = si_mallocItem(alloc[SC_MAIN], scInitializer);
-				leftInit->operator = 0;
-				leftInit->node.value = token;
-				leftInit->parent = start;
-
-				prevInit->node.binary.left = leftInit;
-				prevInit->node.binary.right = nil;
-
-				i += 1;
-				token = si_arrayAt(action->values, i);
-
-				if (token != nil) {
-					init = si_mallocItem(alloc[SC_MAIN], scInitializer);
-					init->operator = token->token.operator;
-					init->node.binary.left = start;
-					init->parent = ogPrevInit;
-					ogPrevInit->node.binary.right = init;
-				}
-				else {
-					ogPrevInit->node.binary.right = start;
-				}
-
-				unaryState = true;
-
-				break;
-			}
-
-			default: {
-				init->operator = 0;
-				init->node.value = token;
-				unaryState = false;
-
-				if (prevInit->operator != 0) {
-					prevInit->node.binary.right = init;
-					init = prevInit;
-				}
-			}
-		}
-
-		prevInit = init;
-#endif
 }
 
 scVariable* sc_variableGet(scInfoTable* scope, u64 hash, i32* res) {

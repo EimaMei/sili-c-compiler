@@ -1912,7 +1912,7 @@ typedef siArray(siHashEntry) siHashTable;
 
 /* Creates a hash table using the given names and data. */
 siHashTable si_hashtableMake(siAllocator* alloc, const rawptr* keyArray, usize keyLen,
-		const rawptr dataArray, usize sizeofElement, usize len);
+		const rawptr* dataArray, usize len);
 /* Reserves a 'capacity' amount of items for the hash table. */
 siHashTable si_hashtableMakeReserve(siAllocator* alloc, usize capacity);
 /* Returns the key entry's value pointer from the hash table. If not found, nil
@@ -4987,7 +4987,7 @@ u64 si__hashKey(siByte* key, usize len) {
 
 
 siHashTable si_hashtableMake(siAllocator* alloc, const rawptr* keyArray, usize keyLen,
-		const rawptr dataArray, usize sizeofElement, usize len) {
+		const rawptr* dataArray, usize len) {
 	SI_ASSERT_NOT_NULL(alloc);
 	SI_ASSERT_NOT_NULL(keyArray);
 	SI_ASSERT_NOT_NULL(dataArray);
@@ -4998,10 +4998,8 @@ siHashTable si_hashtableMake(siAllocator* alloc, const rawptr* keyArray, usize k
 	siArrayHeader* arrayHeader = SI_ARRAY_HEADER(table);
 	arrayHeader->len = len;
 
-	siByte* ptr = (siByte*)dataArray;
 	for_range (i, 0, len) {
-		si_hashtableSet(table, keyArray[i], keyLen, ptr, nil);
-		ptr += sizeofElement;
+		si_hashtableSet(table, keyArray[i], keyLen, dataArray[i], nil);
 	}
 
 	return table;

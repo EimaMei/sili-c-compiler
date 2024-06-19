@@ -130,6 +130,8 @@ typedef SI_ENUM(i32, scKeyword) {
 	SILEX_KEYWORD_VOLATILE,
 	SILEX_KEYWORD_WHILE,
 
+	SILEX_KEYWORD___TYPEOF__,
+
 	/* Type keywords */
 	SILEX_KEYWORD_CHAR,
 	SILEX_KEYWORD_SHORT,
@@ -291,7 +293,7 @@ b32 si_charIsUnary(char x) {
 }
 
 siIntern
-scKeyword silex__tokenIdToKeyword(u64 num);
+scKeyword silex__tokenIdToKeyword(u64 num, const char* pLetter);
 
 siIntern
 b32 silex__tokenizeConstantInt(scLexer* lexer, const char* pLetter, isize* unaryBitLen,
@@ -394,7 +396,7 @@ back:
 				SILEX_HASH_FUNC_INIT(hash);
 				const char* start = pLetter;
 
-				while (si_charIsAlphanumeric(*pLetter)) {
+				while (si_charIsAlphanumeric(*pLetter) || *pLetter == '_' || *(u8*)pLetter >= 128) {
 					SILEX_HASH_FUNC(hash, *pLetter);
 					pLetter += 1;
 				}
@@ -403,11 +405,11 @@ back:
 				lexer->state = SILEX_STATE_NORMAL;
 
 				usize len = pLetter - start;
-				if (len <= 8) {
+				if (len <= 10) {
 					u64 stringInt = 0;
 					memcpy(&stringInt, start, len);
 
-					scKeyword keyword = silex__tokenIdToKeyword(stringInt);
+					scKeyword keyword = silex__tokenIdToKeyword(stringInt, pLetter);
 					if (keyword != SILEX_KEYWORD_NONE) {
 						lexer->type = SILEX_TOKEN_KEYWORD;
 						lexer->token.keyword = keyword;
@@ -497,6 +499,7 @@ back:
 
 				lexer->column = pLetter - lexer->lineStart;
 				lexer->state = SILEX_STATE_NORMAL;
+				lexer->__num = 0;
 				return true;
 			}
 			else if (*pLetter == '=') {
@@ -506,6 +509,7 @@ back:
 
 				lexer->column = pLetter - lexer->lineStart;
 				lexer->state = SILEX_STATE_NORMAL;
+				lexer->__num = 0;
 				return true;
 			}
 			SKIP_WHITESPACE(lexer, pLetter);
@@ -558,7 +562,7 @@ back:
 
 
 		/* TODO(EimaMei): Reikia apdoroti atvejį, kai žvaigždutės simbolis
-		yra naudojamas kaip daugybos, o ne skyrybos ženklu. */
+		yra naudojamas kaip daugybos, o ne skyrybos ženklu. SC__STATE_NUM_EXISTS. */
 		case '*':
 			lexer->curData = pLetter + 1;
 
@@ -585,7 +589,7 @@ back:
 
 			lexer->column = pLetter - lexer->lineStart;
 			lexer->state = SILEX_STATE_NORMAL;
-			lexer->__num = 0;
+			lexer->__num = SC__STATE_NUM_EXISTS * (*pLetter == ')');
 
 			return true;
 	}
@@ -595,7 +599,7 @@ back:
 }
 
 static
-void silex__tokenizeUnary(u64 value, isize* pUnaryBitLen, u64* unary) {
+u64 silex__tokenizeUnary(u64 value, isize* pUnaryBitLen, u64* unary) {
 	isize unaryBitLen = *pUnaryBitLen;
 	isize i = unaryBitLen;
 
@@ -614,6 +618,7 @@ void silex__tokenizeUnary(u64 value, isize* pUnaryBitLen, u64* unary) {
 				case SC__UNARY_BIT_MINUS: value = -value; break;
 				case SC__UNARY_BIT_TILDE: value = ~value; break;
 				case SC__UNARY_BIT_EXCLAMATION:	  value = !value; break;
+				default: SI_PANIC();
 			}
 			bits >>= 2;
 		}
@@ -621,6 +626,8 @@ void silex__tokenizeUnary(u64 value, isize* pUnaryBitLen, u64* unary) {
 		i -= 32;
 	}
 	*pUnaryBitLen = -1;
+
+	return value;
 }
 
 static
@@ -682,7 +689,7 @@ b32 silex__tokenizeConstantInt(scLexer* lexer, const char* pLetter, isize* pUnar
 	lexer->type = SILEX_TOKEN_CONSTANT;
 	lexer->state = SILEX_STATE_NORMAL;
 
-	silex__tokenizeUnary(value, pUnaryBitLen, unary);
+	value = silex__tokenizeUnary(value, pUnaryBitLen, unary);
 
 	scConstant* constant = &lexer->token.constant;
 	constant->value.integer = value;
@@ -782,7 +789,7 @@ b32 silex__tokenizeConstantChar(scLexer* lexer, const char* pLetter, isize* pUna
 	lexer->type = SILEX_TOKEN_CONSTANT;
 	lexer->state = SILEX_STATE_NORMAL;
 
-	silex__tokenizeUnary(value, pUnaryBitLen, unary);
+	value = silex__tokenizeUnary(value, pUnaryBitLen, unary);
 
 	scConstant* constant = &lexer->token.constant;
 	constant->value.integer = value;
@@ -810,7 +817,7 @@ b32 silex__tokenizeConstantChar(scLexer* lexer, const char* pLetter, isize* pUna
 
 
 siIntern
-scKeyword silex__tokenIdToKeyword(u64 num) {
+scKeyword silex__tokenIdToKeyword(u64 num, cstring pLetter) {
 
 #if 1
 #define SILEX__TOKENID_AUTO 0x6F747561
@@ -845,6 +852,8 @@ scKeyword silex__tokenIdToKeyword(u64 num) {
 #define SILEX__TOKENID_VOID 0x64696F76
 #define SILEX__TOKENID_VOLATILE 0x656C6974616C6F76
 #define SILEX__TOKENID_WHILE 0x656C696877
+#define SILEX__TOKENID___TYPEOF 0x666F657079745F5F
+#define SILEX__TOKENID___ 0x5F5F
 #endif
 
 	switch (num) {
@@ -880,6 +889,13 @@ scKeyword silex__tokenIdToKeyword(u64 num) {
 		case SILEX__TOKENID_VOID: return SILEX_KEYWORD_VOID;
 		case SILEX__TOKENID_VOLATILE: return SILEX_KEYWORD_VOLATILE;
 		case SILEX__TOKENID_WHILE: return SILEX_KEYWORD_WHILE;
+
+		case SILEX__TOKENID___TYPEOF: {
+			u16 stringInt = 0;
+			memcpy(&stringInt, pLetter - 2, 2);
+			return stringInt == SILEX__TOKENID___;
+		}
+
 	}
 
 	return SILEX_KEYWORD_NONE;

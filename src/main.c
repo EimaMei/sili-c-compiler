@@ -7,8 +7,6 @@
 #include <exegen.h>
 
 
-usize sizeof_SIZE_T = 8;
-
 scType type_char     = (scType){1, SC_TYPE_INT, 0, nil};
 scType type_short    = (scType){2, SC_TYPE_INT, 0, nil};
 scType type_int      = (scType){4, SC_TYPE_INT, 0, nil};
@@ -16,6 +14,8 @@ scType type_long     = (scType){8, SC_TYPE_INT, 0, nil};
 scType type_unsigned = (scType){4, SC_TYPE_INT | SC_TYPE_UNSIGNED, 0, nil};
 scType type_float    = (scType){4, SC_TYPE_FLOAT, 0, nil};
 scType type_double   = (scType){8, SC_TYPE_FLOAT, 0, nil};
+
+scType type_size_t   = (scType){8, SC_TYPE_INT | SC_TYPE_UNSIGNED, 0, nil};
 
 siAllocator* alloc[SC_ALLOC_LEN];
 
@@ -127,7 +127,7 @@ void x86_OP_M32_M32_EX(x86EnvironmentState* x86, scAsm* instruction, u8 opcode, 
 
 
 
-#define X86_ASM_TEMPLATE_MEM_ID(x86, type, baseOpcode, instruction) \
+#define X86_ASM_TEMPLATE_RMB__MEM_ID(x86, type, baseOpcode, instruction) \
 	X86_ASM_TEMPLATE_RMB( \
 		x86, type, baseOpcode, instruction, X86_CFG_DST_M, X86_CFG_IB, X86_CFG_IW, X86_CFG_ID, X86_CFG_ID, \
 		(instruction)->dst, (instruction)->src \
@@ -149,9 +149,64 @@ void x86_OP_M32_M32_EX(x86EnvironmentState* x86, scAsm* instruction, u8 opcode, 
 		sc_x86RegisterConvert(x86, (instruction)->dst), sc_x86RegisterConvert(x86, (instruction)->src) \
 	)
 
+cstring silex_operatorCstr(scOperator op) {
+    switch (op) {
+        case SILEX_OPERATOR_PLUS: return "+";
+        case SILEX_OPERATOR_MINUS: return "-";
+        case SILEX_OPERATOR_MULTIPLY: return "*";
+        case SILEX_OPERATOR_DIVIDE: return "/";
+        case SILEX_OPERATOR_PLUS_PLUS: return "++";
+        case SILEX_OPERATOR_MINUS_MINUS: return "--";
+        case SILEX_OPERATOR_TILDE: return "~";
+        case SILEX_OPERATOR_EXCLAMATION_MARK: return "!";
+        case SILEX_OPERATOR_PLUS_ASSIGN: return "+=";
+        case SILEX_OPERATOR_MINUS_ASSIGN: return "-=";
+        default: return "?";
+    }
+}
+
+void sc_astNodePrint(const scAstNode* node, usize depth, b32 isRight) {
+    SI_ASSERT_NOT_NULL(node);
+
+    if (depth > 0) {
+        for_range(i, 0, depth - 1) { si_print("  "); }
+        si_print(isRight ? "└── R: " : "├── L: ");
+    }
+
+    switch (node->type) {
+        case SC_AST_NODE_TYPE_IDENTIFIER:
+            SI_LOG_FMT("%*s\n", node->data.identifier.len, node->data.identifier.text);
+            break;
+
+        case SC_AST_NODE_TYPE_CONSTANT:
+            switch (node->data.constant.type) {
+                case SILEX_CONSTANT_NUM_SIGNED:
+                    SI_LOG_FMT("%lli\n", node->data.constant.value.integer);
+                    break;
+                case SILEX_CONSTANT_NUM_UNSIGNED:
+                    SI_LOG_FMT("%llu\n", node->data.constant.value.integer);
+                    break;
+                case SILEX_CONSTANT_FLOAT:
+                    SI_LOG_FMT("%f\n", node->data.constant.value.floats);
+                    break;
+            }
+            break;
+
+        case SC_AST_NODE_TYPE_BINARY_OP:
+            SI_LOG_FMT("%s\n", silex_operatorCstr(node->data.binary.operator));
+            sc_astNodePrint(node->data.binary.left, depth + 1, false);
+            sc_astNodePrint(node->data.binary.right, depth + 1, true);
+            break;
+
+        case SC_AST_NODE_TYPE_UNARY_OP:
+            SI_LOG_FMT("%s\n", silex_operatorCstr(node->data.unary.operator));
+            sc_astNodePrint(node->data.unary.operand, depth + 1, true);
+            break;
+    }
+}
 
 void sc_astNodeToAsm(scInfoTable* scope, scAsm* instructions, scOperator assignment,
-		scAsmType asmTypes[3], u32 typeSize,  scAction* action, scAstNode* node,
+		scAsmType asmTypes[4], u32 typeSize,  scAction* action, scAstNode* node,
 		scIdentifierKey* key, u32 regSrc) {
 	scAsm asm;
 
@@ -169,7 +224,7 @@ void sc_astNodeToAsm(scInfoTable* scope, scAsm* instructions, scOperator assignm
 				asm.dst = var->location;
 			}
 			else {
-				asm.dst = 0;
+				asm.dst = regSrc;
 			}
 
 			si_arrayPush(&instructions, asm);
@@ -177,7 +232,7 @@ void sc_astNodeToAsm(scInfoTable* scope, scAsm* instructions, scOperator assignm
 		}
 
 		case SC_AST_NODE_TYPE_IDENTIFIER: {
-			u64 hash = node->data.identifier;
+			u64 hash = node->data.identifier.hash;
 			scIdentifierKey* srcKey = si_hashtableGetWithHash(scope->identifiers, hash);
 			SI_ASSERT(srcKey->type != SC_IDENTIFIER_KEY_FUNC);
 
@@ -192,7 +247,7 @@ void sc_astNodeToAsm(scInfoTable* scope, scAsm* instructions, scOperator assignm
 				asm.dst = dst->location;
 			}
 			else {
-				asm.dst = 0;
+				asm.dst = regSrc;
 			}
 
 			si_arrayPush(&instructions, asm);
@@ -200,35 +255,25 @@ void sc_astNodeToAsm(scInfoTable* scope, scAsm* instructions, scOperator assignm
 		}
 
 		case SC_AST_NODE_TYPE_UNARY_OP: {
-			scOperator operator = node->data.unary.operator;
+			scAsmType type;
+			switch (node->data.unary.operator) {
+				case SILEX_OPERATOR_MINUS: type = SC_ASM_NEG_R8; break;
+				case SILEX_OPERATOR_TILDE: type = SC_ASM_NOT_R8; break;
+				default: SI_PANIC();
+			}
 			node = node->data.unary.operand;
 
 			if (asmTypes[2] == 0 || node->type == SC_AST_NODE_TYPE_UNARY_OP) {
 				sc_astNodeToAsm(scope, instructions, assignment, asmTypes, typeSize, action, node, key, regSrc);
 
-				switch (operator) {
-					case SILEX_OPERATOR_MINUS: {
-						asm.type = sc_asmGetCorrectType(SC_ASM_NEG_M8, typeSize);
-						asm.dst = ((scAsm*)si_arrayBack(instructions))->dst;
-						asm.src = 0;
-						si_arrayPush(&instructions, asm);
-
-						break;
-					}
-					case SILEX_OPERATOR_TILDE: {
-						asm.type = sc_asmGetCorrectType(SC_ASM_NOT_M8, typeSize);
-						asm.dst = ((scAsm*)si_arrayBack(instructions))->dst;
-						asm.src = 0;
-						si_arrayPush(&instructions, asm);
-
-						break;
-					}
-					default: SI_PANIC();
-				}
+				asm.type = sc_asmGetCorrectType(type, typeSize);
+				asm.dst = ((scAsm*)si_arrayBack(instructions))->dst;
+				asm.src = 0;
+				si_arrayPush(&instructions, asm);
 				break;
 			}
 
-			u64 hash = node->data.identifier;
+			u64 hash = node->data.identifier.hash;
 			scIdentifierKey* srcKey = si_hashtableGetWithHash(scope->identifiers, hash);
 			SI_ASSERT(srcKey->type != SC_IDENTIFIER_KEY_FUNC);
 
@@ -239,7 +284,7 @@ void sc_astNodeToAsm(scInfoTable* scope, scAsm* instructions, scOperator assignm
 			asm.src = src->location;
 			si_arrayPush(&instructions, asm);
 
-			asm.type = sc_asmGetCorrectType(SC_ASM_NOT_R8, typeSize);
+			asm.type = sc_asmGetCorrectType(type, typeSize);
 			si_arrayPush(&instructions, asm);
 
 			asm.type = sc_asmGetCorrectType(asmTypes[2], typeSize);
@@ -250,7 +295,7 @@ void sc_astNodeToAsm(scInfoTable* scope, scAsm* instructions, scOperator assignm
 				asm.dst = ((scVariable*)key->identifier)->location;
 			}
 			else {
-				asm.src = 0;
+				asm.src = regSrc;
 			}
 
 			si_arrayPush(&instructions, asm);
@@ -259,41 +304,52 @@ void sc_astNodeToAsm(scInfoTable* scope, scAsm* instructions, scOperator assignm
 
 		case SC_AST_NODE_TYPE_BINARY_OP: {
 			scOperator operator = node->data.binary.operator;
-			scAsmType typesLD[3];
-			scAsmType typesOP[3];
-			if (key != nil) {
-				typesLD[0] = !assignment ? SC_ASM_LD_M8_I8 : sc_asmGetCorrectOperator(SC_ASM_ADD_M8_I8, assignment);
-				typesLD[1] = !assignment ? SC_ASM_LD_M8_M8 : sc_asmGetCorrectOperator(SC_ASM_ADD_M8_M8, assignment);
-				typesLD[2] = !assignment ? 0 : sc_asmGetCorrectOperator(SC_ASM_ADD_M8_R8, assignment);
 
-				typesOP[0] = sc_asmGetCorrectOperator(SC_ASM_ADD_M8_I8, operator);
-				typesOP[1] = sc_asmGetCorrectOperator(SC_ASM_ADD_M8_M8, operator);
-				typesOP[2] = sc_asmGetCorrectOperator(SC_ASM_ADD_M8_R8, operator);
+			scAsmType* types[2];
+			scAsmType typesLD[4];
+			scAsmType typesOP[4];
+
+				if (key != nil) {
+					typesLD[0] = !assignment ? SC_ASM_LD_M8_I8 : sc_asmGetCorrectOperator(SC_ASM_ADD_M8_I8, assignment);
+					typesLD[1] = !assignment ? SC_ASM_LD_M8_M8 : sc_asmGetCorrectOperator(SC_ASM_ADD_M8_M8, assignment);
+					typesLD[2] = !assignment ? 0 : sc_asmGetCorrectOperator(SC_ASM_ADD_M8_R8, assignment);
+
+					typesOP[0] = sc_asmGetCorrectOperator(SC_ASM_ADD_M8_I8, operator);
+					typesOP[1] = sc_asmGetCorrectOperator(SC_ASM_ADD_M8_M8, operator);
+					typesOP[2] = sc_asmGetCorrectOperator(SC_ASM_ADD_M8_R8, operator);
+				}
+				else {
+					typesLD[0] = !assignment ? SC_ASM_LD_R8_I8 : sc_asmGetCorrectOperator(SC_ASM_ADD_R8_I8, assignment);
+					typesLD[1] = !assignment ? SC_ASM_LD_R8_M8 : sc_asmGetCorrectOperator(SC_ASM_ADD_R8_M8, assignment);
+					typesLD[2] = !assignment ? 0 : sc_asmGetCorrectOperator(SC_ASM_ADD_R8_R8, assignment);
+
+					typesOP[0] = sc_asmGetCorrectOperator(SC_ASM_ADD_R8_I8, operator);
+					typesOP[1] = sc_asmGetCorrectOperator(SC_ASM_ADD_R8_M8, operator);
+					typesOP[2] = sc_asmGetCorrectOperator(SC_ASM_ADD_R8_R8, operator);
+				}
+				typesLD[3] = asmTypes[3];
+				typesOP[3] = asmTypes[3];
+
+			if (asmTypes[2] == 0) {
+				types[0] = typesLD;
+				types[1] = typesOP;
 			}
 			else {
-				typesLD[0] = !assignment ? SC_ASM_LD_R8_I8 : sc_asmGetCorrectOperator(SC_ASM_ADD_R8_I8, assignment);
-				typesLD[1] = !assignment ? SC_ASM_LD_R8_M8 : sc_asmGetCorrectOperator(SC_ASM_ADD_R8_M8, assignment);
-				typesLD[2] = !assignment ? 0 : sc_asmGetCorrectOperator(SC_ASM_ADD_R8_R8, assignment);
-
-				typesOP[0] = sc_asmGetCorrectOperator(SC_ASM_ADD_R8_I8, operator);
-				typesOP[1] = sc_asmGetCorrectOperator(SC_ASM_ADD_R8_M8, operator);
-				typesOP[2] = sc_asmGetCorrectOperator(SC_ASM_ADD_R8_R8, operator);
+				types[0] = types[1] = typesOP;
 			}
 
-			scAsmType* types[2] = {typesLD, typesOP};
-
-			// b32 isRoot = action->root == node;
 			sc_astNodeToAsm(scope, instructions, assignment, types[0], typeSize, action, node->data.binary.left, key, regSrc);
 			sc_astNodeToAsm(scope, instructions, assignment, types[1], typeSize, action, node->data.binary.right, key, regSrc);
 
 			if (key == nil) {
-				asm.type = sc_asmGetCorrectType(asmTypes[2], typeSize);
+				asm.type = sc_asmGetCorrectType(asmTypes[3], typeSize);
 				asm.dst = 0;
 				asm.src = regSrc;
 				si_arrayPush(&instructions, asm);
 			}
 			break;
 		}
+		default: SI_PANIC();
 	}
 }
 
@@ -308,6 +364,7 @@ void sc_astwhater(scAstNode* other) {
 }
 
 void sc_astNodeOptimize(scAstNode* node) {
+	SI_STOPIF(node == nil, return);
 	SI_STOPIF(node->type != SC_AST_NODE_TYPE_BINARY_OP, return);
 
 	scAstNode* args[] = {node->data.binary.left, node->data.binary.right};
@@ -345,16 +402,16 @@ void sc_astNodeOptimize(scAstNode* node) {
 					scOperator operator = node->data.binary.operator;
 					switch (operator) {
 						case SILEX_OPERATOR_PLUS:
-							arg->data.constant.value.integer += other->data.constant.value.integer;
+							args[0]->data.constant.value.integer += args[1]->data.constant.value.integer;
 							break;
 						case SILEX_OPERATOR_MINUS:
-							arg->data.constant.value.integer -= other->data.constant.value.integer;
+							args[0]->data.constant.value.integer -= args[1]->data.constant.value.integer;
 							break;
 						/* case SILEX_OPERATOR_MUL: oppositeLeft *= right; */
 						default: SI_PANIC();
 					}
 					node->type = SC_AST_NODE_TYPE_CONSTANT;
-					node->data.constant = arg->data.constant;
+					node->data.constant = args[0]->data.constant;
 					i += 1;
 				}
 				break;
@@ -388,6 +445,7 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 	SI_LOG("== AST nodes have been completed  ==\n");
 
 	for_range (i, 0, si_arrayLen(func->code)) {
+		break;
 		scAction* action = &func->code[i];
 
 		sc_astNodeOptimize(action->root);
@@ -424,16 +482,20 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 		scAction* action = &func->code[i];
 		SI_ASSERT_NOT_NULL(action);
 
+
+		sc_astNodePrint(action->root, 4, false);
+
 		switch (action->type) {
 			case SC_ACTION_VAR_ASSIGN: {
 				scIdentifierKey* key = sc_actionIdentifierGet(action->values);
 				scVariable* var = (scVariable*)key->identifier;
 				stack = si_alignCeilEx(stack + var->type.size, var->type.size);
 				var->location = stack;
+				SI_STOPIF(si_arrayLen(action->values) == 1, break);
 
 				sc_astNodeToAsm(
 					scope, instructions, 0,
-					si_buf(u32, SC_ASM_LD_M8_I8, SC_ASM_LD_M8_M8),
+					si_buf(u32, SC_ASM_LD_M8_I8, SC_ASM_LD_M8_M8, 0),
 					var->type.size, action, action->root, key,
 					0
 				);
@@ -445,7 +507,7 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 
 				sc_astNodeToAsm(
 					scope, instructions, SILEX_OPERATOR_PLUS,
-					si_buf(u32, SC_ASM_ADD_M8_I8, SC_ASM_ADD_M8_M8),
+					si_buf(u32, SC_ASM_ADD_M8_I8, SC_ASM_ADD_M8_M8, 0),
 					var->type.size, action, action->root, key,
 					0
 				);
@@ -458,7 +520,7 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 
 				sc_astNodeToAsm(
 					scope, instructions, SILEX_OPERATOR_MINUS,
-					si_buf(u32, SC_ASM_SUB_M8_I8, SC_ASM_SUB_M8_M8),
+					si_buf(u32, SC_ASM_SUB_M8_I8, SC_ASM_SUB_M8_M8, 0),
 					var->type.size, action, action->root, key,
 					0
 				);
@@ -467,10 +529,13 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 			case SC_ACTION_RETURN: {
 				sc_astNodeToAsm(
 					scope, instructions, 0,
-					si_buf(u32, SC_ASM_RET_I8, SC_ASM_RET_M8, SC_ASM_RET_R8),
+					si_buf(u32, SC_ASM_LD_R8_I8, SC_ASM_LD_R8_M8, 0, SC_ASM_LD_R8_R8),
 					func->type.size, action, action->root, nil,
 					SC_ASM_REG_RET
 				);
+
+				asm.type = SC_ASM_RET;
+				si_arrayPush(&instructions, asm);
 				break;
 			}
 			default: SI_PANIC();
@@ -557,20 +622,23 @@ int main(void) {
 		"auto", "break", "case", "char", "const", "continue", "default", "do",
 		"double", "else", "enum", "extern", "float", "for", "goto", "if", "int", "long",
 		"register", "return", "short", "signed", "sizeof", "static", "struct", "switch",
-		"typedef", "union", "unsigned", "void", "volatile", "while"
+		"typedef", "union", "unsigned", "void", "volatile", "while",
+
+		"__typeof", "__"
 	};
 	u64 keywords_U64[countof(keywords)];
+	memset(keywords_U64, 0, sizeof(keywords_U64));
 
 	for_range (i, 0, countof(keywords)) {
 		usize len = si_cstrLen(keywords[i]);
 		SI_ASSERT(len <= 8);
-#if 0
+#if 1
 		memcpy(&keywords_U64[i], keywords[i], len);
 
 		char m[1024];
 		memcpy(m, keywords[i], len + 1);
 		si_cstrUpper(m);
-		si_printf("SILEX_KEYWORD_%s,\n", m, m);
+		SI_LOG_FMT("SILEX_KEYWORD_%s, %#llX\n", m, keywords_U64[i]);
 #endif
 	}
 #endif
@@ -676,7 +744,7 @@ int main(void) {
 	}
 	si_timeStampPrintSince(ts2);
 
-	si_printf("%ll#X: %p %ll#X\n", (n) ? *n : 0, n, hash);
+	SI_LOG_FMT("%ll#X: %p %ll#X\n", (n) ? *n : 0, n, hash);
 	SI_PANIC();
 #endif
 
@@ -722,7 +790,7 @@ int main(void) {
 										action.values = si_arrayMakeReserve(alloc[SC_MAIN], sizeof(scTokenStruct), 2);
 										si_arrayPush(&action.values, key);
 
-										scPunctuator punc = sc_actionAddValues(&lex, &action);
+										scPunctuator punc = sc_actionAddValues(&lex, scope, &action);
 										si_arrayPush(&curFunc->code, action);
 
 										switch (punc) {
@@ -736,7 +804,7 @@ int main(void) {
 										action.values = si_arrayMakeReserve(alloc[SC_MAIN], sizeof(scTokenStruct), 2);
 										si_arrayPush(&action.values, key);
 
-										scPunctuator punc = sc_actionAddValues(&lex, &action);
+										scPunctuator punc = sc_actionAddValues(&lex, scope, &action);
 										si_arrayPush(&curFunc->code, action);
 
 										switch (punc) {
@@ -900,6 +968,8 @@ type_section_start:
 						break;
 					}
 
+					case ',':
+					case ';':
 					case '=': {
 						scIdentifierKey* key = sc_identifierKeyGet(scope, name.hash, SC_IDENTIFIER_KEY_VAR);
 						scVariable* pVar = (scVariable*)key->identifier;
@@ -909,7 +979,10 @@ type_section_start:
 						action.values = si_arrayMakeReserve(alloc[SC_MAIN], sizeof(scTokenStruct), 2);
 						si_arrayPush(&action.values, key);
 
-						scPunctuator punc = sc_actionAddValues(&lex, &action);
+						scPunctuator punc = (lex.token.punctuator == '=')
+							? sc_actionAddValues(&lex, scope, &action)
+							: lex.token.punctuator;
+
 						if (curFunc == nil) {
 							SI_PANIC();
 						}
@@ -926,17 +999,13 @@ type_section_start:
 								sc_tokenGet(&lex);
 								goto type_section_start;
 							case ';': break;
-							default: SI_PANIC_MSG("Expression should end with a semicolin or continued via a comma punctuator.");
+							default: SI_LOG_FMT("%i\n", punc); SI_PANIC_MSG("Expression should end with a semicolin or continued via a comma punctuator.");
 						}
 
 						break;
 					}
 
-					case ';':
-						si_printf("Found a variable that exists.\n");
-						SI_PANIC();
-						break;
-					default: si_printf("%c\n", lex.token.punctuator); SI_PANIC();
+					default: SI_LOG_FMT("%c\n", lex.token.punctuator); SI_PANIC();
 				}
 				continue;
 
@@ -946,7 +1015,7 @@ keyword_section:
 						action.type = SC_ACTION_RETURN;
 						action.values = si_arrayMakeReserve(alloc[SC_MAIN], sizeof(scTokenStruct), 1);
 
-						sc_actionAddValues(&lex, &action);
+						sc_actionAddValues(&lex, scope, &action);
 						si_arrayPush(&curFunc->code, action);
 						break;
 					}
@@ -969,6 +1038,7 @@ keyword_section:
 
 						break;
 					}
+
 					default: SI_PANIC();
 				}
 
@@ -1093,7 +1163,7 @@ keyword_section:
 				sc_x86OpcodePush(&x86, X86_PUSH_R64 + RBP);
 
 				sc_x86Opcode(
-					&x86, X86_MOV_RM32_R32, RBP, RSP,
+					&x86, X86_MOV_RM8_R8 + 1, RBP, RSP,
 					X86_CFG_REX_PREFIX | X86_CFG_RMB | X86_CFG_64BIT | X86_CFG_DST_R | X86_CFG_SRC_R
 				);
 				break;
@@ -1102,7 +1172,7 @@ keyword_section:
 			case SC_ASM_LD_M32_PARAM: {
 				x86Register reg = sc_x86PickFunctionArg(&x86);
 				sc_x86Opcode(
-					&x86, X86_MOV_RM32_R32, instruction->dst, reg,
+					&x86, X86_MOV_RM8_R8 + 1, instruction->dst, reg,
 					X86_CFG_RMB | X86_CFG_DST_M | X86_CFG_SRC_R
 				);
 				break;
@@ -1111,15 +1181,22 @@ keyword_section:
 			case SC_ASM_LD_M64_PARAM: {
 				x86Register reg = sc_x86PickFunctionArg(&x86);
 				sc_x86Opcode(
-					&x86, X86_MOV_RM32_R32, instruction->dst, reg,
+					&x86, X86_MOV_RM8_R8 + 1, instruction->dst, reg,
 					X86_CFG_RMB | X86_CFG_64BIT | X86_CFG_DST_M | X86_CFG_SRC_R
 				);
 				break;
 			}
 
+			/* ====== SC_ASM_LD_<>_<> ======= */
+			/* === SC_ASM_LD_R8_<> ==== */
+			X86_ASM_TEMPLATE_RMB__REG_REG(&x86, SC_ASM_LD_R8_R8, X86_MOV_R8_RM8, instruction)
 			X86_ASM_TEMPLATE_RMB__REG_MEM(&x86, SC_ASM_LD_R8_M8, X86_MOV_R8_RM8, instruction)
 			X86_ASM_TEMPLATE_RMB__REG_ID(&x86, SC_ASM_LD_R8_I8, X86_MOV_RM8_I8, instruction)
-			X86_ASM_TEMPLATE_MEM_ID(&x86, SC_ASM_LD_M8_I8, X86_MOV_RM8_I8, instruction)
+			/* === SC_ASM_LD_M8_<> ==== */
+			X86_ASM_TEMPLATE_RMB__MEM_REG(&x86, SC_ASM_LD_M8_R8, X86_MOV_RM8_R8, instruction)
+			//
+			X86_ASM_TEMPLATE_RMB__MEM_ID(&x86, SC_ASM_LD_M8_I8, X86_MOV_RM8_I8, instruction)
+
 
 			X86_ASM_TEMPLATE_RMB__MEM_REG(&x86, SC_ASM_ADD_M8_R8, X86_ADD_RM8_R8, instruction)
 			X86_ASM_TEMPLATE_RMB__MEM_REG(&x86, SC_ASM_SUB_M8_R8, X86_SUB_RM8_R8, instruction)
@@ -1133,11 +1210,11 @@ keyword_section:
 			X86_ASM_TEMPLATE_RMB__REG(&x86, SC_ASM_NOT_R8, X86_NOT_RM8, instruction, X86_CFG_NOTATION_2)
 			X86_ASM_TEMPLATE_RMB__MEM(&x86, SC_ASM_NOT_M8, X86_NOT_RM8, instruction, X86_CFG_NOTATION_2)
 
-			//X86_ASM_TEMPLATE_R_EX(&x86, SC_ASM_NOT_M8, X86_NOT_RM8, instruction, X86_CFG_NOTATION_2)
-
+			X86_ASM_TEMPLATE_RMB__REG(&x86, SC_ASM_NEG_R8, X86_NOT_RM8, instruction, X86_CFG_NOTATION_3)
+			X86_ASM_TEMPLATE_RMB__MEM(&x86, SC_ASM_NEG_M8, X86_NOT_RM8, instruction, X86_CFG_NOTATION_3)
 
 			case SC_ASM_LD_M32_M32:
-				x86_OP_M32_M32(&x86, instruction, X86_MOV_RM32_R32);
+				x86_OP_M32_M32(&x86, instruction, X86_MOV_RM8_R8 + 1);
 				break;
 
 
@@ -1181,45 +1258,12 @@ keyword_section:
 				x86_OP_M32_M32_EX(&x86, instruction, X86_SUB_RM8_R8 + 1, X86_CFG_SUB);
 				break;
 
-
-			case SC_ASM_RET_R32: {
-				x86Register reg = sc_x86RegisterConvert(&x86, instruction->src);
-
-				if (reg != RAX) {
-					sc_x86Opcode(
-						&x86, X86_MOV_R32_I32, RAX, reg,
-						X86_CFG_ID | X86_CFG_DST_R
-					);
-				}
+			case SC_ASM_RET:
 				sc_x86OpcodePush(&x86, X86_POP_R64 + RBP);
 				sc_x86OpcodePush(&x86, X86_RET);
-
 				break;
-			}
 
-			case SC_ASM_RET_I32: {
-				sc_x86Opcode(
-					&x86, X86_MOV_R32_I32, RAX, instruction->src,
-					X86_CFG_ID | X86_CFG_DST_R
-				);
-				sc_x86OpcodePush(&x86, X86_POP_R64 + RBP);
-				sc_x86OpcodePush(&x86, X86_RET);
-
-				break;
-			}
-
-			case SC_ASM_RET_M8: case SC_ASM_RET_M16:
-			case SC_ASM_RET_M32: {
-				sc_x86Opcode(
-					&x86, X86_MOV_R32_RM32, RAX, instruction->src,
-					X86_CFG_RMB | X86_CFG_DST_R | X86_CFG_SRC_M
-				);
-				sc_x86OpcodePush(&x86, X86_POP_R64 + RBP);
-				sc_x86OpcodePush(&x86, X86_RET);
-
-				break;
-			}
-			default: si_printf("INSTR: %i\n", instruction->type); SI_PANIC();
+			default: SI_LOG_FMT("INSTR: %i\n", instruction->type); SI_PANIC();
 		}
 	}
 
@@ -1271,7 +1315,7 @@ keyword_section:
 			}
 			case SC_ASM_SYSCALL: {
 				sc_x86Opcode(
-				   	&x86, X86_MOV_RM32_R32, EDI, EAX,
+				   	&x86, X86_MOV_RM8_R8 + 1, EDI, EAX,
 				   	X86_CFG_RMB | X86_CFG_DST_R | X86_CFG_SRC_R
 				);
 				sc_x86Opcode(

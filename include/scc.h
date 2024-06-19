@@ -16,7 +16,7 @@ typedef SI_ENUM(i32, scAstNodeType) {
 typedef struct scAstNode {
 	scAstNodeType type;
 	union {
-		u64 identifier;
+		scString identifier;
 		scConstant constant;
 		struct {
 			struct scAstNode* left;
@@ -151,21 +151,15 @@ typedef SI_ENUM(u32, scAsmType) {
 	SC_ASM_LD_M32_PARAM,
 	SC_ASM_LD_M64_PARAM,
 
+	SC_ASM_LD_R8_R8 = SC_ASM_LD_M8_PARAM + 4,
+	SC_ASM_LD_R8_M8 = SC_ASM_LD_R8_R8 + 4,
+	SC_ASM_LD_R64_M64 = SC_ASM_LD_R8_M8 + 4,
 	SC_ASM_LD_R8_I8,
-	SC_ASM_LD_R16_I16,
-	SC_ASM_LD_R32_I32,
-	SC_ASM_LD_R64_I64,
 
-	SC_ASM_LD_R8_M8,
-	SC_ASM_LD_R16_M16,
-	SC_ASM_LD_R32_M32,
-	SC_ASM_LD_R64_M64,
-
-	SC_ASM_LD_M8_I8,
+	SC_ASM_LD_M8_I8 = SC_ASM_LD_R8_I8 + 4,
 	SC_ASM_LD_M16_I16,
 	SC_ASM_LD_M32_I32,
 	SC_ASM_LD_M64_I32,
-	SC_ASM_LD_M64_I64,
 
 	SC_ASM_LD_M8_M8,
 	SC_ASM_LD_M16_M16,
@@ -226,30 +220,16 @@ typedef SI_ENUM(u32, scAsmType) {
 	SC_ASM_SUB_M32_M32,
 	SC_ASM_SUB_M64_M64,
 
+
 	SC_ASM_NEG_R8 = SC_ASM_SUB_M8_M8 + 4,
 	SC_ASM_NEG_M8 = SC_ASM_NEG_R8 + 4,
 
 	SC_ASM_NOT_R8 = SC_ASM_NEG_M8 + 4,
 	SC_ASM_NOT_M8 = SC_ASM_NOT_R8 + 4,
 
+
 	SC_ASM_CALL = SC_ASM_NOT_M8 + 4,
-
-	SC_ASM_RET_R8 = SC_ASM_CALL + 4,
-	SC_ASM_RET_R16,
-	SC_ASM_RET_R32,
-	SC_ASM_RET_R64,
-
-	SC_ASM_RET_I8,
-	SC_ASM_RET_I16,
-	SC_ASM_RET_I32,
-	SC_ASM_RET_I64,
-
-	SC_ASM_RET_M8,
-	SC_ASM_RET_M16,
-	SC_ASM_RET_M32,
-	SC_ASM_RET_M64,
-
-
+	SC_ASM_RET,
 	SC_ASM_SYSCALL,
 };
 
@@ -285,12 +265,14 @@ extern scType type_unsigned;
 extern scType type_float;
 extern scType type_double;
 
+extern scType type_size_t;
+
 
 #define SC_ALLOCATOR_MAKE(type, limit, ...) \
 	do { \
 		alloc[(type)] = si_allocatorMake(__VA_ARGS__); \
 		usize bytes = alloc[(type)]->maxLen; \
-		si_printf("%f MB\n", bytes / 1024.f / 1024.f); \
+		SI_LOG_FMT("%f MB\n", bytes / 1024.f / 1024.f); \
 		SI_ASSERT(bytes <= limit); \
 	} while (0)
 
@@ -331,7 +313,7 @@ scType sc_typeGetAndMake(scLexer* lex, scInfoTable* scope);
 
 void sc_constantArithmetic(scConstant* constant, scOperator operator, scConstant src);
 
-scPunctuator sc_actionAddValues(scLexer* lex, scAction* action);
+scPunctuator sc_actionAddValues(scLexer* lex, scInfoTable* scope, scAction* action);
 
 /* */
 void sc_astNodeMake(siArray(scAction) action, b32 firstIsIdentifier);

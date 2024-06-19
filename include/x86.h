@@ -63,12 +63,11 @@ typedef struct {
 #define X86_SUB_R8_RM8 0x2A
 
 #define X86_SUB_RM8_R8 0x28
-#define X86_SUB_RM8_R8 0x28
 #define X86_SUB_RM32_I32 0x81
 
 
 
-#define X86_MOV_RM32_R32 0x89
+#define X86_MOV_RM8_R8 0x88
 
 #define X86_MOV_R8_RM8 0x8A
 

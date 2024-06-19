@@ -9,12 +9,13 @@ This section isn't meant to taken 100% seriously, there are a lot of other compo
 
 ## C89 implementation
 - [ ] variable declarations:
-    - [ ] `int x;`
+    - [x] `int x;`
     - [x] `int x = <int>;`
     - [x] `int x = <identifier (static/non-static)>;`
     - [x] `int x = <identifier/int> <+|-> <identifier/int>;`
     - [x] `int x = <identifier/int> <+|-> <identifier/int> <+|-> <identifier/int>...`
     - [x] `,` operator use (`NOTE:` Doesn't assert when a variable doesn't exist if it's declared later in the comma chain).
+    - [ ] Declarations in the global scope
 - [ ] scopes
 - [ ] pointers
 - [ ] `(` and `)` usage
@@ -119,7 +120,10 @@ This section isn't meant to taken 100% seriously, there are a lot of other compo
     - [ ] for
     - [x] signed
     - [ ] goto
-    - [ ] sizeof
+    - [ ] sizeof:
+        - [ ] `sizeof(type)`
+        - [x] `sizeof expression`
+        - [ ] `sizeof(expression)`
     - [ ] if
     - [ ] static
     - [ ] struct
@@ -132,8 +136,8 @@ This section isn't meant to taken 100% seriously, there are a lot of other compo
 - [ ] Variadic functions
 
 ## Platform support
-- [ ] x86
-    - [ ] AMD64 (x86-64 for Unix, x64 for Windows)
+- [ ] x86:
+    - [ ] AMD64 (x86-64 for Unix, x64 for Windows):
         - [x] Linux:
             - [x] `_start` entrypoint
             - [x] executable file generation
@@ -141,7 +145,7 @@ This section isn't meant to taken 100% seriously, there are a lot of other compo
         - [ ] MacOS
         - [ ] Windows
         - [ ] Other Unix OSses
-    - [ ] i386 (x86-32 for Unix, x86 for Windows)
+    - [ ] i386 (x86-32 for Unix, x86 for Windows):
         - [ ] Linux
         - [ ] MacOS
         - [ ] Windows
@@ -180,8 +184,45 @@ statements)
 - [ ] 127 enumeration constants in a single enumeration
 - [ ] 15 levels of nested structure or union definitions in a single struct-declaration-list
 
+## Compiler optimizations (Kompiliatoriaus optimizavimai)
+- [x] [Constant folding (Konstantų suprastinimas)](https://en.wikipedia.org/wiki/Constant_folding#Constant_folding):
+    - `Example:`
+        ```c
+        // Before the optimization (Prieš optimizavimą)
+        int x = 50 + 45 - 500 * 2;
+        // After the optimization (Po optimizavimo)
+        int x = -905;
+        ```
+- [ ] [Constant propagation (Konstantų skleidimas)](https://en.wikipedia.org/wiki/Constant_folding#Constant_propagation):
+    - `Example:`
+        ```c
+        // Before the optimization (Prieš optimizavimą)
+        int x = 250;
+        int y = x / 10;
+        // After the optimization (Po optimizavimo)
+        int x = 250;
+        int y = 25;
+        ```
+- [ ] [Dead-code elimination (Negyvų kodų pašalinimas)](https://en.wikipedia.org/wiki/Dead-code_elimination):
+    - [ ] [Dead store (Negyva atmintinė)](https://en.wikipedia.org/wiki/Dead_store):
+        - `Example:`
+            ```c
+            // Before the optimization (Prieš optimizavimą)
+            int func() {
+                int x = 250;
+                int y = x / 10;
+                return y;
+            }
+            // After the optimization (Po optimizavimo)
+            int func() { return 25; }
+            ```
+
+
 ## Command-line arguments
-- [ ] Make it possible to change the input/output files.
+- [ ] input/output
+- [ ] optimization level
+- [ ] custom function entrypoint
+- [ ] `-nostartfiles` equivalent
 
 ## Other
 - [ ] Fix `si_realloc` for the compiler
