@@ -273,22 +273,16 @@ scAstNode* sc_astTokenToNode(scAction* action, scTokenStruct* token, b32 binaryO
 
 	switch (token->type) {
 		case SILEX_TOKEN_CONSTANT: {
-			node = si_mallocItem(alloc[SC_MAIN], scAstNode);
-
 			node->type = SC_AST_NODE_TYPE_CONSTANT;
 			node->data.constant = token->token.constant;
 			break;
 		}
 		case SILEX_TOKEN_IDENTIFIER: {
-			node = si_mallocItem(alloc[SC_MAIN], scAstNode);
-
 			node->type = SC_AST_NODE_TYPE_IDENTIFIER;
 			node->data.identifier = token->token.identifier;
 			break;
 		}
 		case SILEX_TOKEN_OPERATOR: {
-			node = si_mallocItem(alloc[SC_MAIN], scAstNode);
-
 			if (prevNode == nil || binaryOP) {
 				sc_astHandleUnary(action, token, node, outI);
 				break;
@@ -310,14 +304,20 @@ scAstNode* sc_astTokenToNode(scAction* action, scTokenStruct* token, b32 binaryO
 			if (token->token.punctuator != '(') {
 				SI_PANIC();
 			}
-			do {
+
+			node->type = SC_AST_NODE_TYPE_GROUP_OP;
+			prevNode = node;
+
+			while (true) {
 				*outI += 1;
 				token = si_arrayAt(action->values, *outI);
 				SI_ASSERT_NOT_NULL(token);
-				if (token->type == SILEX_TOKEN_PUNCTUATOR && token->token.punctuator == ')') break;
+				if (token->type == SILEX_TOKEN_PUNCTUATOR && token->token.punctuator == ')') {
+					break;
+				}
 				prevNode = sc_astTokenToNode(action, token, false, prevNode, outI);
-			} while (true);
-			node = prevNode;
+			}
+			node->data.group.start = prevNode;
 
 
 			break;
@@ -427,4 +427,46 @@ scVariable* sc_variableGetAndOptimizeToken(scInfoTable* scope, scTokenStruct* to
 
 	*res = 0;
 	return var;
+}
+
+scAsmRegister sc_asmRegisterAny(scAsmEnvironmentState* state, b32 set) {
+	scAsmRegister reg = SC_ASM_REG_0;
+	while (!sc_asmRegisterAvailable(*state, reg)) {
+		reg += 1;
+	}
+
+	if (set) {
+		sc_asmRegisterSet(state, reg);
+	}
+
+	return reg;
+}
+
+void sc_asmRegisterSet(scAsmEnvironmentState* state, scAsmRegister reg) {
+	SI_ASSERT(si_betweenu(reg, SC_ASM_REG_0, SC_ASM_REG_15));
+
+	u32 value = reg - SC_ASM_REG_0;
+	state->registers |= SI_BIT(value);
+}
+
+void sc_asmRegisterUnset(scAsmEnvironmentState* state, scAsmRegister reg) {
+	SI_ASSERT(si_betweenu(reg, SC_ASM_REG_0, SC_ASM_REG_15));
+
+	u32 value = reg - SC_ASM_REG_0;
+	state->registers &= ~SI_BIT(value);
+}
+
+
+
+b32 sc_asmRegisterAvailable(scAsmEnvironmentState state, scAsmRegister reg) {
+	SI_ASSERT(si_betweenu(reg, SC_ASM_REG_0, SC_ASM_REG_15));
+
+	u32 value = reg - SC_ASM_REG_0;
+	u32 regBit = SI_BIT(value);
+
+	if ((state.registers & regBit) == 0) {
+		return true;
+	}
+
+	return false;
 }

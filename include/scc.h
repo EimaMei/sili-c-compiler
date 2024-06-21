@@ -11,6 +11,7 @@ typedef SI_ENUM(i32, scAstNodeType) {
 	SC_AST_NODE_TYPE_CONSTANT,
 	SC_AST_NODE_TYPE_BINARY_OP,
 	SC_AST_NODE_TYPE_UNARY_OP,
+	SC_AST_NODE_TYPE_GROUP_OP
 };
 
 typedef struct scAstNode {
@@ -27,6 +28,9 @@ typedef struct scAstNode {
 			struct scAstNode* operand;
 			scOperator operator;
 		} unary;
+		struct {
+			struct scAstNode* start;
+		} group;
 	} data;
 } scAstNode;
 
@@ -140,32 +144,20 @@ SI_STATIC_ASSERT(sizeof(scInfoTable) == 56);
 
 typedef SI_ENUM(u32, scAsmType) {
 	SC_ASM_FUNC_START = 1,
+	SC_ASM_REG_SET,
+	SC_ASM_REG_UNSET,
 
 	SC_ASM_PUSH_R64,
 
-	SC_ASM_POP_R64,
+	SC_ASM_POP_R8,
 
-
-	SC_ASM_LD_M8_PARAM,
-	SC_ASM_LD_M16_PARAM,
-	SC_ASM_LD_M32_PARAM,
-	SC_ASM_LD_M64_PARAM,
-
-	SC_ASM_LD_R8_R8 = SC_ASM_LD_M8_PARAM + 4,
+	SC_ASM_LD_R8_R8 = SC_ASM_POP_R8 + 4,
 	SC_ASM_LD_R8_M8 = SC_ASM_LD_R8_R8 + 4,
 	SC_ASM_LD_R64_M64 = SC_ASM_LD_R8_M8 + 4,
+
 	SC_ASM_LD_R8_I8,
-
 	SC_ASM_LD_M8_I8 = SC_ASM_LD_R8_I8 + 4,
-	SC_ASM_LD_M16_I16,
-	SC_ASM_LD_M32_I32,
-	SC_ASM_LD_M64_I32,
-
-	SC_ASM_LD_M8_M8,
-	SC_ASM_LD_M16_M16,
-	SC_ASM_LD_M32_M32,
-	SC_ASM_LD_M64_M32,
-
+	SC_ASM_LD_M8_M8 = SC_ASM_LD_M8_I8 + 4,
 	SC_ASM_LD_M8_R8 = SC_ASM_LD_M8_M8 + 4,
 
 
@@ -176,49 +168,19 @@ typedef SI_ENUM(u32, scAsmType) {
 	SC_ASM_SUB_R8_R8 = SC_ASM_ADD_R8_R8 + 4,
 
 	SC_ASM_ADD_R8_I8 = SC_ASM_SUB_R8_R8 + 4,
-	SC_ASM_ADD_R16_I16,
-	SC_ASM_ADD_R32_I32,
-	SC_ASM_ADD_R64_I64,
+	SC_ASM_SUB_R8_I8 = SC_ASM_ADD_R8_I8 + 4,
 
-	SC_ASM_SUB_R8_I8,
-	SC_ASM_SUB_R16_I16,
-	SC_ASM_SUB_R32_I32,
-	SC_ASM_SUB_R64_I64,
-
-
-	SC_ASM_ADD_R8_M8,
-	SC_ASM_ADD_R16_M16,
-	SC_ASM_ADD_R32_M32,
-	SC_ASM_ADD_R64_M64,
-
-	SC_ASM_SUB_R8_M8,
-	SC_ASM_SUB_R16_M16,
-	SC_ASM_SUB_R32_M32,
-	SC_ASM_SUB_R64_M64,
+	SC_ASM_ADD_R8_M8 = SC_ASM_SUB_R8_I8 + 4,
+	SC_ASM_SUB_R8_M8 = SC_ASM_ADD_R8_M8 + 4,
 
 	SC_ASM_ADD_M8_R8 = SC_ASM_SUB_R8_M8 + 4,
 	SC_ASM_SUB_M8_R8 = SC_ASM_ADD_M8_R8 + 4,
 
 	SC_ASM_ADD_M8_I8 = SC_ASM_SUB_M8_R8 + 4,
-	SC_ASM_ADD_M16_I16,
-	SC_ASM_ADD_M32_I32,
-	SC_ASM_ADD_M64_I64,
+	SC_ASM_SUB_M8_I8 = SC_ASM_ADD_M8_I8 + 4,
 
-	SC_ASM_SUB_M8_I8,
-	SC_ASM_SUB_M16_I16,
-	SC_ASM_SUB_M32_I32,
-	SC_ASM_SUB_M64_I64,
-
-
-	SC_ASM_ADD_M8_M8,
-	SC_ASM_ADD_M16_M16,
-	SC_ASM_ADD_M32_M32,
-	SC_ASM_ADD_M64_M64,
-
-	SC_ASM_SUB_M8_M8,
-	SC_ASM_SUB_M16_M16,
-	SC_ASM_SUB_M32_M32,
-	SC_ASM_SUB_M64_M64,
+	SC_ASM_ADD_M8_M8 = SC_ASM_SUB_M8_I8 + 4,
+	SC_ASM_SUB_M8_M8 = SC_ASM_ADD_M8_M8 + 4,
 
 
 	SC_ASM_NEG_R8 = SC_ASM_SUB_M8_M8 + 4,
@@ -231,7 +193,33 @@ typedef SI_ENUM(u32, scAsmType) {
 	SC_ASM_CALL = SC_ASM_NOT_M8 + 4,
 	SC_ASM_RET,
 	SC_ASM_SYSCALL,
+
+	SC_ASM_INSTRUCTION_LEN
 };
+
+typedef SI_ENUM(u32, scAsmRegister) {
+	SC_ASM_REG_0 = SC_ASM_INSTRUCTION_LEN,
+	SC_ASM_REG_1,
+	SC_ASM_REG_2,
+	SC_ASM_REG_3,
+	SC_ASM_REG_4,
+	SC_ASM_REG_5,
+	SC_ASM_REG_6,
+	SC_ASM_REG_7,
+	SC_ASM_REG_8,
+	SC_ASM_REG_9,
+	SC_ASM_REG_10,
+	SC_ASM_REG_11,
+	SC_ASM_REG_12,
+	SC_ASM_REG_13,
+	SC_ASM_REG_14,
+	SC_ASM_REG_15,
+
+	SC_ASM_REG_PARAM_0,
+	SC_ASM_REG_PARAM_1,
+};
+#define SC_ASM_REG_RET UINT32_MAX
+#define SC_ASM_REG_PARAM_MAX (UINT32_MAX - SC_ASM_INSTRUCTION_LEN - 1)
 
 typedef struct {
 	scAsmType type;
@@ -239,6 +227,13 @@ typedef struct {
 	u32 src;
 } scAsm;
 SI_STATIC_ASSERT(sizeof(scAsm) == 12);
+
+
+typedef struct {
+	b16 registers;
+	scInfoTable* scope;
+} scAsmEnvironmentState;
+
 
 typedef SI_ENUM(u32, scIndex) {
 	SC_FILE,
@@ -276,8 +271,6 @@ extern scType type_size_t;
 		SI_ASSERT(bytes <= limit); \
 	} while (0)
 
-#define SC_ASM_REG_ANY (UINT32_MAX - 1)
-#define SC_ASM_REG_RET UINT32_MAX
 
 #define sc_typeCmp(t1, t2) ((t1)->size == (t2)->size && SI_TO_U64((isize*)(t1) + 1) == SI_TO_U64((isize*)(t2) + 1))
 #define sc_typeIsVoid(type) ((type)->size == 0)
@@ -322,6 +315,18 @@ void sc_astNodeMake(siArray(scAction) action, b32 firstIsIdentifier);
 scVariable* sc_variableGet(scInfoTable* scope, u64 hash, i32* res);
 /* */
 scVariable* sc_variableGetAndOptimizeToken(scInfoTable* scope, scTokenStruct* token, i32* res);
+
+
+/* */
+b32 sc_asmRegisterAvailable(scAsmEnvironmentState state, scAsmRegister reg);
+
+/* */
+scAsmRegister sc_asmRegisterAny(scAsmEnvironmentState* state, b32 set);
+
+/* */
+void sc_asmRegisterSet(scAsmEnvironmentState* state, scAsmRegister reg);
+/* */
+void sc_asmRegisterUnset(scAsmEnvironmentState* state, scAsmRegister reg);
 
 
 #endif /* SC_SCC_INCLUDE_H */

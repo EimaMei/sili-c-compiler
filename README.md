@@ -18,7 +18,7 @@ This section isn't meant to taken 100% seriously, there are a lot of other compo
     - [ ] Declarations in the global scope
 - [ ] scopes
 - [ ] pointers
-- [ ] `(` and `)` usage
+- [x] `(` and `)` usage:
 - [ ] Casting
 - [ ] functions:
     - [ ] K&R function declarations/implementations.

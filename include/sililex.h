@@ -280,6 +280,9 @@ scLexer silex_lexerMake(cstring content, usize len);
 b32 silex_lexerTokenGet(scLexer* lexer);
 
 
+/* */
+cstring silex_operatorCstr(scOperator op);
+
 
 #if defined(SILEX_IMPLEMENTATION)
 
@@ -596,6 +599,23 @@ back:
 	SI_PANIC();
 
 	return false;
+}
+
+
+cstring silex_operatorCstr(scOperator op) {
+    switch (op) {
+        case SILEX_OPERATOR_PLUS: return "+";
+        case SILEX_OPERATOR_MINUS: return "-";
+        case SILEX_OPERATOR_MULTIPLY: return "*";
+        case SILEX_OPERATOR_DIVIDE: return "/";
+        case SILEX_OPERATOR_PLUS_PLUS: return "++";
+        case SILEX_OPERATOR_MINUS_MINUS: return "--";
+        case SILEX_OPERATOR_TILDE: return "~";
+        case SILEX_OPERATOR_EXCLAMATION_MARK: return "!";
+        case SILEX_OPERATOR_PLUS_ASSIGN: return "+=";
+        case SILEX_OPERATOR_MINUS_ASSIGN: return "-=";
+        default: return "?";
+    }
 }
 
 static
