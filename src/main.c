@@ -259,7 +259,6 @@ void sc_astNodeToAsm(scAsmEnvironmentState* state, scAsm* instructions, scOperat
 				asm.dst = ((scVariable*)key->identifier)->location;
 			}
 			else {
-				/* TODO(EimaMei): Why does THIS work? It has to be a bug... */
 				asm.type = sc_asmGetCorrectType(!assignment ? SC_ASM_LD_R8_R8 : sc_asmGetCorrectOperator(SC_ASM_ADD_R8_R8, assignment), typeSize);
 				asm.dst = regSrc;
 			}
@@ -277,53 +276,80 @@ void sc_astNodeToAsm(scAsmEnvironmentState* state, scAsm* instructions, scOperat
 	}
 }
 
-void sc_astNodeOptimize(scAstNode* node) {
-	SI_STOPIF(node == nil, return);
-	SI_STOPIF(node->type != SC_AST_NODE_TYPE_BINARY_OP, return);
+b32 sc_astwhater(scAstNode* other) {
+	if (other->type == SC_AST_NODE_TYPE_CONSTANT) {
+		other->data.constant.value.integer -= 1;
+		return true;
+	}
+	else if (other->type == SC_AST_NODE_TYPE_BINARY_OP) {
+		b32 stop = sc_astwhater(other->data.binary.left);
+		SI_STOPIF(!stop, sc_astwhater(other->data.binary.right));
+	}
 
-	scAstNode* args[] = {node->data.binary.left, node->data.binary.right};
-	for_range (i, 0, countof(args)) {
-		scAstNode* arg = args[i];
+	return false;
+}
 
-		switch (arg->type) {
-			case SC_AST_NODE_TYPE_BINARY_OP:
-				sc_astNodeOptimize(arg);
-				break;
-			case SC_AST_NODE_TYPE_UNARY_OP: {
-				scOperator operator = arg->data.unary.operator;
-#if 0
-				if (operator == SILEX_OPERATOR_TILDE) {
-					operator = SILEX_OPERATOR_MINUS;
+void sc_astNodeOptimize(scAstNode* opNode, scAstNode* primaryNode, scAstNode* oppositeNode) {
+	SI_STOPIF(primaryNode == nil, return);
 
-					scAstNode* other = args[i ^ 1];
-					sc_astwhater(other);
-				}
 
-				if (node->data.binary.operator == operator) {
-					node->data.binary.operator = SILEX_OPERATOR_PLUS;
-					*arg = *arg->data.unary.operand;
-				}
-				else {
-					node->data.binary.operator = SILEX_OPERATOR_MINUS;
-					*arg = *arg->data.unary.operand;
-				}
-#endif
+	switch (primaryNode->type) {
+		case SC_AST_NODE_TYPE_GROUP_OP: {
+			if (opNode == nil) {
+				*primaryNode = *primaryNode->data.group.start;
+				sc_astNodeOptimize(nil, primaryNode, nil);
 				break;
 			}
-			case SC_AST_NODE_TYPE_CONSTANT: {
-				scAstNode* other = args[i ^ 1];
-				if (other->type == SC_AST_NODE_TYPE_CONSTANT) {
-					scOperator operator = node->data.binary.operator;
-					sc_constantArithmetic(
-						&arg[0].data.constant, operator, args[1]->data.constant
-					);
+			sc_astNodeOptimize(primaryNode, primaryNode->data.group.start, nil);
 
-					node->type = SC_AST_NODE_TYPE_CONSTANT;
-					node->data.constant = args[0]->data.constant;
-					i += 1;
-				}
-				break;
+			scAstNode* node = primaryNode->data.group.start;
+			if (node->type != SC_AST_NODE_TYPE_BINARY_OP) {
+				*primaryNode = *node;
 			}
+
+			break;
+		}
+
+		case SC_AST_NODE_TYPE_BINARY_OP:
+			sc_astNodeOptimize(primaryNode, primaryNode->data.binary.left, primaryNode->data.binary.right);
+			if (primaryNode->type == SC_AST_NODE_TYPE_BINARY_OP) {
+				sc_astNodeOptimize(primaryNode, primaryNode->data.binary.right, primaryNode->data.binary.left);
+			}
+			break;
+		case SC_AST_NODE_TYPE_UNARY_OP: {
+			SI_STOPIF(oppositeNode == nil, return);
+			scOperator operator = primaryNode->data.unary.operator;
+			if (operator == SILEX_OPERATOR_TILDE) {
+				operator = SILEX_OPERATOR_MINUS;
+				sc_astwhater(oppositeNode);
+			}
+
+
+			if (opNode->data.binary.operator == operator) {
+				opNode->data.binary.operator = SILEX_OPERATOR_PLUS;
+				*primaryNode = *primaryNode->data.unary.operand;
+			}
+			else {
+				opNode->data.binary.operator = SILEX_OPERATOR_MINUS;
+				*primaryNode = *primaryNode->data.unary.operand;
+			}
+			break;
+		}
+		case SC_AST_NODE_TYPE_CONSTANT: {
+			SI_STOPIF(oppositeNode == nil, return);
+			scAstNode* node = primaryNode;
+			scAstNode* other = oppositeNode;
+
+			if (other->type == SC_AST_NODE_TYPE_CONSTANT) {
+				scOperator operator = opNode->data.binary.operator;
+				sc_constantArithmetic(
+					&node->data.constant, operator, oppositeNode->data.constant
+				);
+
+				opNode->type = SC_AST_NODE_TYPE_CONSTANT;
+				opNode->data.constant = node->data.constant;
+			}
+			break;
 		}
 	}
 }
@@ -354,13 +380,13 @@ void sc_parseFunction(scInfoTable* scope, scFunction* func, scAsm* instructions)
 
 	for_range (i, 0, si_arrayLen(func->code)) {
 		scAction* action = &func->code[i];
-		sc_astNodeOptimize(action->root);
+		sc_astNodeOptimize(nil, action->root, nil);
 	}
 	SI_LOG("== AST node optimizations have been implemented ==\n");
 
 	scAsmEnvironmentState state;
 	state.scope = scope;
-	state.registers = 0;
+	state.registers = SI_BIT(RSP) | SI_BIT(RBP);
 
 	scAsm asm;
 	asm.type = SC_ASM_FUNC_START;
@@ -1066,7 +1092,7 @@ keyword_section:
 			case SC_ASM_FUNC_START: {
 				scFunction* func = &global_scope.funcs[instruction->dst];
 				func->location = x86.len;
-				x86.root.registers = 0;
+				x86.root.registers = SI_BIT(RSP) | SI_BIT(RBP);
 				break;
 			}
 			case SC_ASM_REG_SET:
@@ -1111,7 +1137,7 @@ keyword_section:
 
 			/* ====== SC_ASM_SUB_<>_<> ======= */
 			/* === SC_ASM_SUB_R8_<> ==== */
-			X86_ASM_TEMPLATE__REG_REG_RMB(&x86, SC_ASM_SUB_R8_R8, X86_SUB_RM8_R8, instruction)
+			X86_ASM_TEMPLATE__REG_RMB_REG(&x86, SC_ASM_SUB_R8_R8, X86_SUB_RM8_R8, instruction)
 			X86_ASM_TEMPLATE__REG_MEM_RMB(&x86, SC_ASM_SUB_R8_M8, X86_SUB_R8_RM8, instruction)
 			X86_ASM_TEMPLATE__REG_RMB_INT_EX(&x86, SC_ASM_SUB_R8_I8, X86_SUB_RM8_I8, instruction, X86_CFG_SUB)
 			/* === SC_ASM_SUB_M8_<> ==== */
@@ -1125,8 +1151,8 @@ keyword_section:
 			X86_ASM_TEMPLATE_RMB__REG(&x86, SC_ASM_NOT_R8, X86_NOT_RM8, instruction, X86_CFG_NOTATION_2)
 			X86_ASM_TEMPLATE_RMB__MEM(&x86, SC_ASM_NOT_M8, X86_NOT_RM8, instruction, X86_CFG_NOTATION_2)
 			/* ====== SC_ASM_NEG_<R8/M8> ======= */
-			X86_ASM_TEMPLATE_RMB__REG(&x86, SC_ASM_NEG_R8, X86_NOT_RM8, instruction, X86_CFG_NOTATION_3)
-			X86_ASM_TEMPLATE_RMB__MEM(&x86, SC_ASM_NEG_M8, X86_NOT_RM8, instruction, X86_CFG_NOTATION_3)
+			X86_ASM_TEMPLATE_RMB__REG(&x86, SC_ASM_NEG_R8, X86_NEG_RM8, instruction, X86_CFG_NOTATION_3)
+			X86_ASM_TEMPLATE_RMB__MEM(&x86, SC_ASM_NEG_M8, X86_NEG_RM8, instruction, X86_CFG_NOTATION_3)
 
 
 			case SC_ASM_RET:

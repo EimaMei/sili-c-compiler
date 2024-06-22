@@ -169,6 +169,95 @@ void sc_x86Opcode__REG_REG_RMB(x86EnvironmentState* x86, u8 opcode, scAsm* asm,
 	for_range (j, 0, i) { SI_LOG_FMT("%ll02X ", out[j]); }
 	SI_LOG("\n");
 }
+void sc_x86Opcode__REG_RMB_REG(x86EnvironmentState* x86, u8 opcode, scAsm* asm,
+		x86Config config) {
+	usize i = 0;
+	u8* out = &x86->data[x86->len];
+
+	x86Register dst = sc_x86RegisterConvert(x86, asm->dst),
+				src = sc_x86RegisterConvert(x86, asm->src);
+
+	if (config & X86_CFG_64BIT) {
+		out[i] = X86REX(((config & X86_CFG_64BIT) != 0), 0, 0, 0), i += 1;
+	}
+
+	out[i] = opcode, i += 1;
+	out[i] = X86RMBYTE(X86_MOD_RM_MOD_REG, src, dst), i += 1;
+	x86->len += i;
+
+	for_range (j, 0, i) { SI_LOG_FMT("%ll02X ", out[j]); }
+	SI_LOG("\n");
+}
+
+void sc_x86Opcode__REG_RMB(x86EnvironmentState* x86, u8 opcode, scAsm* asm,
+		x86Config config) {
+	usize i = 0;
+	u8* out = &x86->data[x86->len];
+
+	x86Register dst = sc_x86RegisterConvert(x86, asm->dst);
+
+	if (config & X86_CFG_64BIT) {
+		out[i] = X86REX(((config & X86_CFG_64BIT) != 0), 0, 0, 0), i += 1;
+	}
+
+	u8 reg;
+	switch (config & X86_CFG_NOTATION_BITS) {
+		case X86_CFG_NOTATION_2: reg = 2; break;
+		case X86_CFG_NOTATION_3: reg = 3; break;
+		default: SI_PANIC();
+	}
+
+
+	out[i] = opcode, i += 1;
+	out[i] = X86RMBYTE(X86_MOD_RM_MOD_REG, reg, dst), i += 1;
+	x86->len += i;
+
+	for_range (j, 0, i) { SI_LOG_FMT("%ll02X ", out[j]); }
+	SI_LOG("\n");
+}
+
+void sc_x86Opcode__MEM_RMB(x86EnvironmentState* x86, u8 opcode, scAsm* asm,
+		x86Config config) {
+	usize i = 0;
+	u8* out = &x86->data[x86->len];
+
+	x86ModRM_MOD mod = asm->dst <= UINT8_MAX ? X86_MOD_RM_MOD_M8 : X86_MOD_RM_MOD_M32;
+
+	if (config & X86_CFG_64BIT) {
+		out[i] = X86REX(((config & X86_CFG_64BIT) != 0), 0, 0, 0), i += 1;
+	}
+	u32 reg;
+	switch (config & X86_CFG_NOTATION_BITS) {
+		case X86_CFG_NOTATION_2: reg = 2; break;
+		case X86_CFG_NOTATION_3: reg = 3; break;
+		default: SI_PANIC();
+	}
+
+
+	out[i] = opcode, i += 1;
+	out[i] = X86RMBYTE(mod, reg, RBP), i += 1;
+
+
+	if (mod == X86_MOD_RM_MOD_M8) {
+		u8 val = asm->src;
+		if ((config & X86_CFG_SRC_M_NOT_NEG) == 0) {
+			val = -val;
+		}
+		memcpy(&out[i], &val, 1), i += 1;
+	}
+	else if (mod == X86_MOD_RM_MOD_M32) {
+		SI_PANIC();
+		u32 val = asm->src;
+		if ((config & X86_CFG_SRC_M_NOT_NEG) == 0) {
+			val = -val;
+		}
+		memcpy(&out[i], &val, 4), i += 4;
+	}
+
+	for_range (j, 0, i) { SI_LOG_FMT("%ll02X ", out[j]); }
+	SI_LOG("\n");
+}
+
 
 
 void sc_x86Opcode__REG_RMB_INT(x86EnvironmentState* x86, u8 opcode, scAsm* asm,
@@ -184,12 +273,8 @@ void sc_x86Opcode__REG_RMB_INT(x86EnvironmentState* x86, u8 opcode, scAsm* asm,
 
 	u32 reg;
 	switch (config & X86_CFG_MUL_OP_BITS) {
-		case X86_CFG_ADD:
-			reg = 0;
-			break;
-		case X86_CFG_SUB:
-			reg = 5;
-			break;
+		case X86_CFG_ADD: reg = 0; break;
+		case X86_CFG_SUB: reg = 5; break;
 		default: SI_PANIC();
 	}
 
@@ -199,16 +284,9 @@ void sc_x86Opcode__REG_RMB_INT(x86EnvironmentState* x86, u8 opcode, scAsm* asm,
 	u32 src = asm->src;
 	switch (config & X86_CFG_INTWORD_BITS) {
 		case 0: break;
-
-		case X86_CFG_IB:
-			memcpy(&out[i], &src, sizeof(u8)), i += 1;
-			break;
-		case X86_CFG_IW:
-			memcpy(&out[i], &src, sizeof(u16)), i += 2;
-			break;
-		case X86_CFG_ID:
-			memcpy(&out[i], &src, sizeof(u32)), i += 4;
-			break;
+		case X86_CFG_IB: memcpy(&out[i], &src, sizeof(u8)), i += 1; break;
+		case X86_CFG_IW: memcpy(&out[i], &src, sizeof(u16)), i += 2; break;
+		case X86_CFG_ID: memcpy(&out[i], &src, sizeof(u32)), i += 4; break;
 		default: SI_PANIC();
 	}
 
@@ -429,7 +507,8 @@ x86Register sc_x86PickAvailableReg(x86EnvironmentState* x86) {
 	scAsmRegister reg = SC_ASM_REG_0;
 	while (!sc_asmRegisterAvailable(x86->root, reg)) { reg += 1; }
 
-	return reg - SC_ASM_REG_0;
+	x86Register value = reg - SC_ASM_REG_0;
+	return value;
 }
 
 
@@ -452,15 +531,15 @@ x86Register sc_x86PickAvailableReg(x86EnvironmentState* x86) {
 
 
 #define X86_ASM_TEMPLATE__NEW(x86, type, opcode, instruction, extra, func) \
-	case type + 0: func(x86, opcode + 0, instruction, extra); break; \
-	case type + 1: func(x86, opcode + 0, instruction, extra); break; \
-	case type + 2: func(x86, opcode + 1, instruction, extra); break; \
-	case type + 3: func(x86, opcode + 1, instruction, extra | X86_CFG_64BIT); break;
+	case type + 0: sc_x86Opcode__ ## func(x86, opcode + 0, instruction, extra); break; \
+	case type + 1: sc_x86Opcode__ ## func(x86, opcode + 1, instruction, extra); break; \
+	case type + 2: sc_x86Opcode__ ## func(x86, opcode + 1, instruction, extra); break; \
+	case type + 3: sc_x86Opcode__ ## func(x86, opcode + 1, instruction, extra | X86_CFG_64BIT); break;
 #define X86_ASM_TEMPLATE_INT__NEW(x86, type, opcode, instruction, extra, func) \
-	case type + 0: func(x86, opcode + 0, instruction, extra | X86_CFG_IB); break; \
-	case type + 1: func(x86, opcode + 0, instruction, extra | X86_CFG_IW); break; \
-	case type + 2: func(x86, opcode + 1, instruction, extra | X86_CFG_ID); break; \
-	case type + 3: func(x86, opcode + 1, instruction, extra | X86_CFG_IQ | X86_CFG_64BIT); break;
+	case type + 0: sc_x86Opcode__ ## func(x86, opcode + 0, instruction, extra | X86_CFG_IB); break; \
+	case type + 1: sc_x86Opcode__ ## func(x86, opcode + 1, instruction, extra | X86_CFG_IW); break; \
+	case type + 2: sc_x86Opcode__ ## func(x86, opcode + 1, instruction, extra | X86_CFG_ID); break; \
+	case type + 3: sc_x86Opcode__ ## func(x86, opcode + 1, instruction, extra | X86_CFG_IQ | X86_CFG_64BIT); break;
 
 
 #define X86_ASM_TEMPLATE_RMB(x86, type, opcode, extra, extra8bit,  extra16bit, \
@@ -472,18 +551,17 @@ x86Register sc_x86PickAvailableReg(x86EnvironmentState* x86) {
 	)
 
 #define X86_ASM_TEMPLATE_RMB__REG(x86, type, opcode, instruction, extra) \
-	X86_ASM_TEMPLATE_RMB( \
-		x86, type, opcode, X86_CFG_DST_R | (extra), 0, 0, 0, 0, \
-		sc_x86RegisterConvert(x86, (instruction)->dst), 0, \
-		sc_x86Opcode \
-	)
+	X86_ASM_TEMPLATE__NEW(x86, type, opcode, instruction, extra, REG_RMB)
 
 #define X86_ASM_TEMPLATE__REG_REG_RMB(x86, type, opcode, instruction) \
-	X86_ASM_TEMPLATE__NEW(x86, type, opcode, instruction, 0, sc_x86Opcode__REG_REG_RMB)
+	X86_ASM_TEMPLATE__NEW(x86, type, opcode, instruction, 0, REG_REG_RMB)
+#define X86_ASM_TEMPLATE__REG_RMB_REG(x86, type, opcode, instruction) \
+	X86_ASM_TEMPLATE__NEW(x86, type, opcode, instruction, 0, REG_RMB_REG)
+
 #define X86_ASM_TEMPLATE__REG_MEM_RMB(x86, type, opcode, instruction) \
-	X86_ASM_TEMPLATE__NEW(x86, type, opcode, instruction, 0, sc_x86Opcode__REG_MEM_RMB)
+	X86_ASM_TEMPLATE__NEW(x86, type, opcode, instruction, 0, REG_MEM_RMB)
 #define X86_ASM_TEMPLATE__REG_RMB_INT_EX(x86, type, opcode, instruction, extra) \
-	X86_ASM_TEMPLATE_INT__NEW(x86, type, opcode, instruction, extra, sc_x86Opcode__REG_RMB_INT)
+	X86_ASM_TEMPLATE_INT__NEW(x86, type, opcode, instruction, extra, REG_RMB_INT)
 
 #define X86_ASM_TEMPLATE__REG_RMB_INT(x86, type, opcode, instruction) \
 	X86_ASM_TEMPLATE__REG_RMB_INT_EX(x86, type, opcode, instruction, X86_CFG_ADD)
@@ -492,11 +570,7 @@ x86Register sc_x86PickAvailableReg(x86EnvironmentState* x86) {
 
 
 #define X86_ASM_TEMPLATE_RMB__MEM(x86, type, opcode, instruction, extra) \
-	X86_ASM_TEMPLATE_RMB( \
-		x86, type, opcode, X86_CFG_DST_M | (extra), 0, 0, 0, 0, \
-		(instruction)->dst, 0, \
-		sc_x86Opcode \
-	)
+	X86_ASM_TEMPLATE__NEW(x86, type, opcode, instruction, extra, MEM_RMB)
 
 #define X86_ASM_TEMPLATE_RMB__MEM_REG(x86, type, opcode, instruction) \
 	X86_ASM_TEMPLATE_RMB( \

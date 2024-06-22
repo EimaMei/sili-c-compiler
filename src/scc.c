@@ -464,6 +464,7 @@ b32 sc_asmRegisterAvailable(scAsmEnvironmentState state, scAsmRegister reg) {
 	u32 value = reg - SC_ASM_REG_0;
 	u32 regBit = SI_BIT(value);
 
+
 	if ((state.registers & regBit) == 0) {
 		return true;
 	}

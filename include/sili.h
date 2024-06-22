@@ -711,10 +711,21 @@ SI_STATIC_ASSERT(sizeof(nil) == sizeof(void*));
 	| Unary operators      |
 	========================
 */
-#if !defined(typeof) && !(defined(SI_LANGUAGE_C) && SI_STANDARD_VERSION > SI_STANDARD_C17) && !defined(SI_NO_TYPEOF)
-	/* ...VALUE - TYPE/EXPRESSION
-	* Gets the value's type and expresses it as just a regular type. */
-	#define typeof(.../* VALUE */)  __typeof__(__VA_ARGS__)
+#if !defined(typeof) && !defined(SI_NO_TYPEOF)
+	#ifdef SI_LANGUAGE_C
+		#if SI_STANDARD_VERSION <= SI_STANDARD_C17
+			/* ...VALUE - TYPE/EXPRESSION
+			* Gets the value's type and expresses it as just a regular type. */
+			#define typeof(.../* VALUE */)  __typeof__(__VA_ARGS__)
+			#define SI_TYPEOF_USED 1
+		#endif
+	#elif defined(SI_LANGUAGE_CPP) && SI_STANDARD_VERSION >= SI_STANDARD_CPP11
+		/* ...VALUE - TYPE/EXPRESSION
+		* Gets the value's type and expresses it as just a regular type. */
+		#define typeof(.../* VALUE */) decltype(__VA_ARGS__)
+	#endif
+	#define SI_TYPEOF_USED 1
+#elif !defined(SI_NO_TYPEOF)
 	#define SI_TYPEOF_USED 1
 #endif
 

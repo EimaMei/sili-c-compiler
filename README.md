@@ -192,6 +192,7 @@ statements)
         int x = 50 + 45 - 500 * 2;
         // After the optimization (Po optimizavimo)
         int x = -905;
+    - `Status (Būsena):` Partially done (Dalinai užbaigta)
         ```
 - [ ] [Constant propagation (Konstantų skleidimas)](https://en.wikipedia.org/wiki/Constant_folding#Constant_propagation):
     - `Example:`
